@@ -11,6 +11,13 @@ no ads, and the internet is only used when you ask for it.
 
 **[⬇️ Download Viki (Linux, AppImage)](https://github.com/korhyu00/viki/releases/latest/download/Viki-x86_64.AppImage)**
 
+Also available as a **Flatpak**, from Viki's own repository (she then shows up in Discover, GNOME Software or
+Bazaar and updates there):
+
+```
+flatpak install --user https://korhyu00.github.io/viki-flatpak/viki.flatpakref
+```
+
 ## Run
 
 1. Right-click the downloaded file → **Properties** → **Permissions** → tick "Allow executing file as program".
@@ -44,10 +51,15 @@ The interface is available in French, English, Spanish, Russian, Chinese, Japane
 Viki never sends anything to the internet on her own. Your conversations, memories and settings stay in
 `~/.config/viki` on your computer.
 
+## License
+
+Viki is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License v3.0 or later](LICENSE).
+
 ---
 
 **Français** — Viki est une compagne de bureau pour Linux : discussion avec une IA locale, traduction, correction,
 rappels, création d'images et de musique, surveillance du PC. Tout tourne sur ton ordinateur. Télécharge l'AppImage
-ci-dessus, rends-la exécutable et double-clique dessus.
+ci-dessus, rends-la exécutable et double-clique dessus. Viki est un logiciel libre (licence GPL-3.0 ou ultérieure).
 
 Website: [korhyu.com](https://korhyu.com) · YouTube: [youtube.com/@korhyu](https://www.youtube.com/@korhyu)
