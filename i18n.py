@@ -27,6 +27,25 @@ def lang():
     return _lang
 
 
+def _build(code):
+    """Tables (exact, majuscules, modèles avec {}) d'une langue."""
+    import traductions
+    dst = traductions.T.get(code) or []
+    mp, up, tpl = {}, {}, []
+    for s, t in zip(traductions.SOURCES, dst):
+        if not t:
+            continue
+        mp[s] = t
+        if s.upper() != s:
+            up.setdefault(s.upper(), t.upper())
+        if _PH.search(s):
+            parts = _PH.split(s)
+            rx = "(.+?)".join(re.escape(p) for p in parts)
+            tpl.append((len(s) - 2 * (len(parts) - 1), re.compile(rx, re.S), t))
+    tpl.sort(key=lambda x: -x[0])                   # les modèles les plus précis d'abord
+    return mp, up, tpl
+
+
 def set_lang(code):
     """Charge les traductions de cette langue (fr = rien à traduire)."""
     global _lang, _map, _up, _tpl, _cache
@@ -35,26 +54,36 @@ def set_lang(code):
         _lang, _map, _up, _tpl = "fr", {}, {}, []
         return
     try:
-        import traductions
-        dst = traductions.T.get(code) or []
-        src = traductions.SOURCES
+        _map, _up, tpl = _build(code)
     except Exception:
         _lang, _map, _up, _tpl = "fr", {}, {}, []
         return
     _lang = code
-    _map, _up, tpl = {}, {}, []
-    for s, t in zip(src, dst):
-        if not t:
-            continue
-        _map[s] = t
-        if s.upper() != s:
-            _up.setdefault(s.upper(), t.upper())
-        if _PH.search(s):
-            parts = _PH.split(s)
-            rx = "(.+?)".join(re.escape(p) for p in parts)
-            tpl.append((len(s) - 2 * (len(parts) - 1), re.compile(rx, re.S), t))
-    tpl.sort(key=lambda x: -x[0])                   # les modèles les plus précis d'abord
     _tpl = [(rx, t) for _n, rx, t in tpl]
+
+
+_autres = {}
+
+
+def tr_to(text, code):
+    """Traduit une phrase de Viki vers la langue parlée « code » (même si les menus sont dans une autre).
+    Prudent : seuls les modèles avec assez de texte fixe servent, pour ne pas toucher aux réponses de l'IA."""
+    global _lang, _map, _up, _tpl, _cache
+    code = (code or "fr")[:2]
+    if code == "fr" or code not in dict(LANGS) or not text or not isinstance(text, str):
+        return text
+    if code not in _autres:
+        try:
+            mp, up, tpl = _build(code)
+        except Exception:
+            mp, up, tpl = {}, {}, []
+        _autres[code] = (mp, up, [(rx, t) for n, rx, t in tpl if n >= 8], {})
+    sauve = (_lang, _map, _up, _tpl, _cache)
+    _lang, (_map, _up, _tpl, _cache) = code, _autres[code]
+    try:
+        return tr(text)
+    finally:
+        _lang, _map, _up, _tpl, _cache = sauve
 
 
 def _fill(t, args):

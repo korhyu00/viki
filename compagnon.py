@@ -1146,6 +1146,42 @@ def natural_voice_installed(kind=None):
     return natural_python(kind=kind) is not None
 
 
+ESPEAK_BUNDLED = None
+
+
+def find_espeak():
+    """espeak-ng (voix de secours, robotique mais dans toutes les langues, sans internet) :
+    celui du système, sinon celui livré avec Piper."""
+    global ESPEAK_BUNDLED
+    sys_ = shutil.which("espeak-ng")
+    if sys_:
+        return sys_
+    d = APP_DIR / "piper"
+    exe = d / "espeak-ng"
+    if exe.exists() and (d / "espeak-ng-data").is_dir():
+        try:
+            if not os.access(exe, os.X_OK):
+                exe.chmod(0o755)
+        except OSError:
+            pass
+        if os.access(exe, os.X_OK):
+            ESPEAK_BUNDLED = d
+            return str(exe)
+    return None
+
+
+def espeak_cmd(exe, lang, out, txt):
+    """Commande et environnement pour espeak-ng (celui livré avec Piper a besoin de son dossier)."""
+    code = (voix.ESPEAK.get(lang) if voix else None) or lang or "fr"
+    cmd = [exe, "-v", code + "+f3", "-s", "160", "-w", out]
+    env = None
+    if ESPEAK_BUNDLED and str(exe).startswith(str(ESPEAK_BUNDLED)):
+        cmd.insert(1, f"--path={ESPEAK_BUNDLED}")
+        env = dict(os.environ)
+        env["LD_LIBRARY_PATH"] = str(ESPEAK_BUNDLED) + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    return cmd + [txt], env
+
+
 def find_player():
     for p in ("pw-play", "paplay", "aplay"):
         if shutil.which(p):
@@ -5272,6 +5308,7 @@ class Companion(QWidget):
             self._fun_timer.start(60_000)
             QTimer.singleShot(8000, self._fun_tick)
         QTimer.singleShot(90000, self._tidy_memory)        # elle range sa mémoire (une fois par semaine)
+        QTimer.singleShot(25000, self._propose_voice)       # pas de vraie voix ? on propose de la télécharger (1 fois)
         self._nat_idle_timer = QTimer(self)
         self._nat_idle_timer.timeout.connect(self._natural_idle_check)
         self._nat_idle_timer.start(60000)
@@ -5284,7 +5321,7 @@ class Companion(QWidget):
         self.piper = find_piper()
         self.voice_model = find_voice_model(self.cfg.get("piper_voice", ""))
         self.player_cmd = find_player()
-        self.espeak = shutil.which("espeak-ng")
+        self.espeak = find_espeak()
         self.natural_proc = None
         self.natural_ready = False
         self.natural_note = ""
@@ -7486,9 +7523,12 @@ class Companion(QWidget):
         lines = [l for l in lines if "je te donne l'heure" not in l] or lines      # phrase retirée (inutile)
         B = getattr(self, "brain", None)
         text = B.pick(lines) if B and self.cfg.get("anti_repetition", True) and len(lines) > 1 else random.choice(lines)
+        lng = (self.cfg.get("langue", "fr") or "fr")[:2]
         if (B and key in self.REFORM and self.cfg.get("phrases_ia", True) and not self.battery_saving() and self.ollama_ok and not self.ia_remote()
-                and not self.is_muted() and random.random() < 0.5 and "{" not in text):
+                and not self.is_muted() and random.random() < 0.5 and "{" not in text and lng == "fr"):
             return self._reformulate(text, key)
+        if i18n and lng != "fr":                 # phrase toute faite : dans la langue parlée
+            text = i18n.tr_to(text, lng)
         prenom = self.cfg.get("prenom", "").strip()
         text = (text.replace("{heure}", heure_txt()).replace("{nom}", self.char.get("name", ""))
                 .replace("{titre}", getattr(self, "music_title", "") or "ce morceau")
@@ -7526,6 +7566,8 @@ class Companion(QWidget):
         text = text.strip()
         if not text:
             return
+        if i18n:                                 # phrases de Viki dans la langue parlée (l'IA, elle, répond déjà dans la langue)
+            text = i18n.tr_to(text, self.cfg.get("langue", "fr")).strip() or text
         if getattr(self, "brain", None) and text != "…":
             self.brain.said(text)
         if text != "…" and len(text) > 2:                # tout ce qu'elle dit (pour « Ce qu'elle t'a dit »)
@@ -7553,7 +7595,8 @@ class Companion(QWidget):
             for p in parts:
                 self.queue_speech(p)
             return
-        if voice_on and (self.piper and self.voice_model or self.espeak):
+        if voice_on and (self.piper and (self.voice_model or self.has_voice(self.cfg.get("langue", "fr")))
+                         or self.espeak):
             self.synth_pending = (sid, time.monotonic())
             threading.Thread(target=self._synth, args=(sid, text), daemon=True).start()
         else:
@@ -7596,6 +7639,10 @@ class Companion(QWidget):
                 if lp:
                     model, spk_args = lp, (["--speaker", str(lsp)] if lsp >= 0 else [])
                     txt = re.sub(r"\[[^\]]*\]", "", txt).strip() or txt     # pas la correction en français
+                else:
+                    model = None          # pas de voix pour cette langue : la voix française lirait mal, espeak la lit
+            elif voix and lang != "fr":
+                lang = "fr"               # phrase en français : voix française (ou espeak en français)
             if not ok and self.piper and model:
                 pitch = float(self.cfg.get("voix_hauteur", 1.0)) if voix else 1.0
                 cmd = [self.piper, "-m", piper_model(model), "-f", out] + spk_args + (voix.piper_args(self.cfg, pitch) if voix else [])
@@ -7614,8 +7661,8 @@ class Companion(QWidget):
                 if not ok:
                     print("Piper :", r.stderr.decode(errors="ignore")[-400:], file=sys.stderr)
             if not ok and self.espeak:
-                r = subprocess.run([self.espeak, "-v", lang + "+f3", "-s", "160", "-w", out, txt],
-                                   capture_output=True, timeout=60)
+                cmd, env = espeak_cmd(self.espeak, lang, out, txt)
+                r = subprocess.run(cmd, capture_output=True, timeout=60, env=env)
                 ok = r.returncode == 0
                 used = "espeak" if ok else ""
         except Exception as e:
@@ -8009,9 +8056,11 @@ class Companion(QWidget):
                  "de": "Okay! Sprechen wir Deutsch. Wie geht's dir?", "it": "Va bene! Parliamo italiano. Come stai?",
                  "pt": "Combinado! Vamos falar português. Tudo bem?"}.get(code)
         if not path:
-            self.say(f"D'accord, je te réponds en {nom} ! Je n'ai pas encore de voix pour cette langue : "
-                     "je t'ouvre le catalogue des voix.")
-            QTimer.singleShot(2500, lambda: self.open_voice_catalog(code))
+            if voix.VOIX_DEFAUT.get(code) and self.cfg.get("voice", True):
+                self.ask_yes(f"D'accord, je te réponds en {nom} ! Je télécharge ma voix en {nom} (environ 60 Mo, "
+                             "une seule fois) ? (oui / non)", lambda: self.install_voice(code))
+            else:
+                self.say(f"D'accord, je te réponds en {nom} ! Pour cette langue, je parle avec ma voix de secours.")
         elif hello:
             self.say(hello)
         else:
@@ -8668,6 +8717,8 @@ class Companion(QWidget):
     def notifier(self, txt, ico="🔔", action=""):
         n = self.cfg.setdefault("notifs", [])
         txt = str(txt).strip()
+        if i18n:
+            txt = i18n.tr_to(txt, self.cfg.get("langue", "fr"))
         if n and n[-1].get("txt") == txt and time.time() - n[-1].get("t", 0) < 3600:
             return
         n.append({"t": time.time(), "txt": txt[:300], "ico": ico, "action": action, "lu": False})
@@ -9727,6 +9778,83 @@ class Companion(QWidget):
                     self._rebuild_menus()
             self.bridge.ai_done.emit(fin, "")
         threading.Thread(target=work, daemon=True).start()
+
+    def has_voice(self, code):
+        """Une vraie voix (Piper) pour cette langue ?"""
+        if not voix:
+            return bool(self.voice_model)
+        if code == "fr":
+            return bool(self.voice_model)
+        return bool(voix.voice_for(code, self.cfg, VOICE_DIRS)[0])
+
+    def install_voice(self, code=None, then_say=True):
+        """Télécharge la voix de la langue (Hugging Face, ~60 Mo, une seule fois) — seulement quand tu le demandes.
+        Essaie chaque voix prévue, la version v1.0.0 d'abord."""
+        code = code or self.cfg.get("langue", "fr")
+        cands = (voix.VOIX_DEFAUT.get(code) if voix else None) or []
+        nom = voix.LANGUES[code][1] if voix and code in voix.LANGUES else code
+        if not cands:
+            return self.say(f"Il n'existe pas encore de jolie voix libre en {nom} : je garde ma voix de secours "
+                            "pour cette langue.") if then_say else None
+        dest = DATA_DIR / "voices"
+        self.say(f"Je télécharge ma voix en {nom} (environ 60 Mo, une seule fois)…")
+        think = self.thinking("🔊 Je télécharge ma voix", jauges=False)
+
+        def work():
+            dest.mkdir(parents=True, exist_ok=True)
+            last = ""
+            for chemin, stem in cands:
+                for base in voix.HF_REVS:
+                    try:
+                        for ext in (".onnx.json", ".onnx"):
+                            tmp = dest / (stem + ext + ".part")
+                            req = urllib.request.Request(base + chemin + "/" + stem + ext,
+                                                         headers={"User-Agent": "Viki-compagnon"})
+                            with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+                                shutil.copyfileobj(r, f, 1 << 20)
+                        for ext in (".onnx.json", ".onnx"):
+                            (dest / (stem + ext + ".part")).rename(dest / (stem + ext))
+                        return stem
+                    except Exception as e:
+                        last = str(e)
+                        for ext in (".onnx.json", ".onnx"):
+                            (dest / (stem + ext + ".part")).unlink(missing_ok=True)
+            raise RuntimeError(last or "aucune voix trouvée")
+
+        def done(r):
+            think.end()
+            if isinstance(r, Exception):
+                log_error("voix " + code, r)
+                return self.say(f"Je n'ai pas pu télécharger ma voix : {str(r)[:100]}. Je garde ma voix de secours.")
+            if code == "fr":
+                self.cfg["piper_voice"] = r
+                self.voice_model = find_voice_model(r)
+            else:
+                self.cfg.setdefault("voix_langue", {})[code] = {"voice": r, "speaker": -1}
+            save_config(self.cfg)
+            self._rebuild_menus()
+            hello = {"fr": "Voilà, j'ai ma vraie voix ! Ça te plaît ?", "en": "Here's my real voice! Do you like it?",
+                     "es": "¡Ya tengo mi voz de verdad! ¿Te gusta?", "de": "Jetzt habe ich meine echte Stimme!",
+                     "it": "Ecco la mia vera voce! Ti piace?", "pt": "Agora tenho minha voz de verdade!",
+                     "ru": "Вот мой настоящий голос! Нравится?", "zh": "这是我真正的声音！你喜欢吗？",
+                     "hi": "यह मेरी असली आवाज़ है! तुम्हें पसंद आई?"}.get(code)
+            if then_say and hello:
+                self.say(hello)
+        self._bg(work, done)
+
+    def _propose_voice(self):
+        """Pas de vraie voix pour la langue parlée : on le propose une fois (oui / non)."""
+        code = self.cfg.get("langue", "fr")
+        if not self.cfg.get("assistant_fait") or not self.cfg.get("voice", True) or self.has_voice(code) \
+                or not voix or not voix.VOIX_DEFAUT.get(code):
+            return
+        cle = "voix_proposee_" + code
+        if self.cfg.get(cle):
+            return
+        self.cfg[cle] = True
+        save_config(self.cfg)
+        self.ask_yes("Pour l'instant j'ai une voix de robot 🤖 Je télécharge ma vraie voix (environ 60 Mo, une "
+                     "seule fois) ? (oui / non)", lambda: self.install_voice(code))
 
     def install_french_voice(self):
         base = "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium/"
@@ -12905,11 +13033,17 @@ class Companion(QWidget):
                 log_error("assistant thème")
         if r.get("langue_menus") and r["langue_menus"] != self.cfg.get("langue_menus", "fr"):
             self.set_menu_language(r["langue_menus"])
+        lang_parlee = r.get("langue") or self.cfg.get("langue", "fr")
         if r.get("langue") and r["langue"] != self.cfg.get("langue", "fr"):
             try:
-                self.set_language(r["langue"])
+                self.cfg["langue"] = r["langue"]
+                save_config(self.cfg)
+                self._restart_stt()
             except Exception:
                 log_error("assistant langue")
+        if r.get("voice", True) and r.get("voix_telecharger") and not self.has_voice(lang_parlee):
+            self.cfg["voix_proposee_" + lang_parlee] = True
+            QTimer.singleShot(3500, lambda: self.install_voice(lang_parlee))
         cd = r.get("character_dir")
         if cd and Path(cd).resolve() != Path(self.cfg.get("character_dir", "") or ASSETS_DIR).resolve():
             try:
@@ -20721,6 +20855,9 @@ def diagnostic():
     out.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
 
+
+# Lien de don (Ko-fi…) : vide = le bouton « Faire un don » reste caché. Mettre ici le lien de TON compte.
+DON_URL = ""
 
 # Liens « Soutenir mon travail » (discrets, en bas du menu des réglages)
 SOUTIEN = (

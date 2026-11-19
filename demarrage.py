@@ -190,6 +190,8 @@ class Wizard(QDialog):
                                                                     and self.comp.ia_remote())
         self.o = {}
         rows = [("voice", _tr("🔊 Qu'elle parle à voix haute"), self.cfg.get("voice", True)),
+                ("voix_telecharger", _tr("⬇️ Télécharger sa vraie voix dans ta langue (environ 60 Mo, une seule fois)"),
+                 True),
                 ("chatty", _tr("💬 Qu'elle papote de temps en temps"), self.cfg.get("chatty", True) and
                  not (ram and ram < 8)),
                 ("ronds_toujours", _tr("🔵 Ses raccourcis toujours visibles à côté d'elle"), True),

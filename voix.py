@@ -56,6 +56,24 @@ LANGUES = {
 PREFEREES = {"fr": "fr_FR-siwis-medium", "en": "en_US-amy-medium", "es": "es_ES-sharvard-medium",
              "de": "de_DE-thorsten-medium", "it": "it_IT-paola-medium", "pt": "pt_BR-faber-medium"}
 
+# voix téléchargées d'office pour chaque langue (1re qui existe) : (dossier sur Hugging Face, nom)
+VOIX_DEFAUT = {
+    "fr": [("fr/fr_FR/siwis/medium", "fr_FR-siwis-medium")],
+    "en": [("en/en_US/amy/medium", "en_US-amy-medium")],
+    "es": [("es/es_ES/sharvard/medium", "es_ES-sharvard-medium"), ("es/es_ES/davefx/medium", "es_ES-davefx-medium")],
+    "de": [("de/de_DE/thorsten/medium", "de_DE-thorsten-medium")],
+    "it": [("it/it_IT/paola/medium", "it_IT-paola-medium")],
+    "pt": [("pt/pt_BR/faber/medium", "pt_BR-faber-medium")],
+    "ru": [("ru/ru_RU/irina/medium", "ru_RU-irina-medium"), ("ru/ru_RU/denis/medium", "ru_RU-denis-medium")],
+    "zh": [("zh/zh_CN/huayan/medium", "zh_CN-huayan-medium")],
+    "hi": [("hi/hi_IN/priyamvada/medium", "hi_IN-priyamvada-medium"), ("hi/hi_IN/pratham/medium", "hi_IN-pratham-medium"),
+           ("hi/hi_IN/rohan/medium", "hi_IN-rohan-medium")],
+}
+# la version « v1.0.0 » des voix d'abord (lue telle quelle par le Piper intégré), sinon la dernière
+HF_REVS = ("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/", HF)
+# langue de Viki -> voix espeak-ng (voix de secours, intégrée : marche sans internet)
+ESPEAK = {"zh": "cmn", "en": "en-us", "pt": "pt-br"}
+
 QUALITES = {"x_low": "très léger", "low": "léger", "medium": "normal", "high": "haute qualité"}
 
 

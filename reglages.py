@@ -254,6 +254,12 @@ class SettingsWindow(QWidget):
                 b.setStyleSheet(pill)
                 b.clicked.connect(lambda _=False, u=url: C.open_link(u))
                 return b
+            don = (getattr(C, "DON_URL", "") or "").strip()
+            if don.startswith("https://"):
+                bd = mk("☕", "Faire un don", don)
+                bd.setStyleSheet(pill.replace("#fdf0f5", "#fff4e0").replace("#b0336a", "#9a5a00")
+                                 .replace("#f6d3e2", "#f3d7a6").replace("#fbe0ec", "#ffe8bf"))
+                fl.addWidget(bd)
             fl.addWidget(mk(*sout[0]))
             if len(sout) > 1:
                 row = QHBoxLayout()
