@@ -20857,7 +20857,7 @@ def diagnostic():
 
 
 # Lien de don (Ko-fi…) : vide = le bouton « Faire un don » reste caché. Mettre ici le lien de TON compte.
-DON_URL = ""
+DON_URL = "https://ko-fi.com/korhyu"
 
 # Liens « Soutenir mon travail » (discrets, en bas du menu des réglages)
 SOUTIEN = (

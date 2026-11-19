@@ -63,6 +63,10 @@ python3 compagnon.py
 `install.sh` sets everything up on Arch-based distributions (PyQt6, Piper voice, menu entry).
 Voices, AI models and image/music engines are downloaded by Viki herself when you ask for them.
 
+## Support
+
+Viki is free and always will be. If you like her and want to support my work, you can buy me a coffee on Ko-fi: https://ko-fi.com/korhyu 💜
+
 ## License
 
 Viki is free software: you can redistribute it and/or modify it under the terms of the
