@@ -1,0 +1,76 @@
+{
+  "name": "Halloween",
+  "quand": "halloween",
+  "image": "character.png",
+  "hitmask": "hitmask.png",
+  "eyes": [
+    {
+      "x": 332,
+      "y": 712,
+      "w": 83,
+      "h": 114
+    },
+    {
+      "x": 508,
+      "y": 712,
+      "w": 83,
+      "h": 114
+    }
+  ],
+  "mouth": {
+    "x": 420,
+    "y": 800,
+    "w": 62,
+    "max_open": 26
+  },
+  "skin_sample": {
+    "x": 420,
+    "y": 754
+  },
+  "zones": [
+    {
+      "type": "cheveux",
+      "cx": 420,
+      "cy": 504,
+      "r": 135
+    },
+    {
+      "type": "epaule",
+      "cx": 264,
+      "cy": 982,
+      "r": 62
+    },
+    {
+      "type": "epaule",
+      "cx": 576,
+      "cy": 982,
+      "r": 62
+    },
+    {
+      "type": "main",
+      "cx": 228,
+      "cy": 1211,
+      "r": 47
+    },
+    {
+      "type": "main",
+      "cx": 612,
+      "cy": 1211,
+      "r": 47
+    },
+    {
+      "type": "pieds",
+      "cx": 373,
+      "cy": 1456,
+      "r": 52
+    },
+    {
+      "type": "pieds",
+      "cx": 467,
+      "cy": 1456,
+      "r": 52
+    }
+  ],
+  "cut_bottom": false,
+  "lash_color": "#3a2a3e"
+}

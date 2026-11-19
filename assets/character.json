@@ -1,0 +1,91 @@
+{
+  "name": "Viki",
+  "persona": "une jeune femme adulte aux longs cheveux lilas, douce, joyeuse et un peu taquine, qui adore les pulls tout doux, meilleure amie de Morgane",
+  "image": "character.png",
+  "hitmask": "hitmask.png",
+  "scale": 0.3,
+  "eyes": [
+    {
+      "x": 216,
+      "y": 164,
+      "w": 32,
+      "h": 16
+    },
+    {
+      "x": 284,
+      "y": 160,
+      "w": 32,
+      "h": 16
+    }
+  ],
+  "skin_sample": {
+    "x": 250,
+    "y": 178
+  },
+  "lash_color": "#3a1e22",
+  "mouth": {
+    "x": 252,
+    "y": 206,
+    "w": 26,
+    "max_open": 12
+  },
+  "breath_pivot_y": 0.42,
+  "cut_bottom": false,
+  "zones": [
+    {
+      "type": "accessoire",
+      "cx": 314,
+      "cy": 126,
+      "r": 16
+    },
+    {
+      "type": "cheveux",
+      "cx": 76,
+      "cy": 430,
+      "r": 52
+    },
+    {
+      "type": "cheveux",
+      "cx": 436,
+      "cy": 440,
+      "r": 52
+    },
+    {
+      "type": "epaule",
+      "cx": 124,
+      "cy": 340,
+      "r": 40
+    },
+    {
+      "type": "epaule",
+      "cx": 380,
+      "cy": 336,
+      "r": 40
+    },
+    {
+      "type": "main",
+      "cx": 44,
+      "cy": 800,
+      "r": 36
+    },
+    {
+      "type": "main",
+      "cx": 490,
+      "cy": 770,
+      "r": 40
+    },
+    {
+      "type": "pieds",
+      "cx": 180,
+      "cy": 1444,
+      "r": 48
+    },
+    {
+      "type": "pieds",
+      "cx": 314,
+      "cy": 1444,
+      "r": 48
+    }
+  ],
+  "nettete": true
+}

@@ -1,0 +1,91 @@
+{
+  "name": "Morgane",
+  "persona": "une jeune femme adulte élégante aux longs cheveux noirs et aux yeux rouges, sûre d'elle, taquine et pleine d'humour, la meilleure amie de Viki",
+  "image": "character.png",
+  "hitmask": "hitmask.png",
+  "scale": 0.3,
+  "eyes": [
+    {
+      "x": 188,
+      "y": 154,
+      "w": 34,
+      "h": 18
+    },
+    {
+      "x": 262,
+      "y": 150,
+      "w": 34,
+      "h": 18
+    }
+  ],
+  "skin_sample": {
+    "x": 224,
+    "y": 170
+  },
+  "lash_color": "#1c1418",
+  "mouth": {
+    "x": 228,
+    "y": 206,
+    "w": 30,
+    "max_open": 12
+  },
+  "breath_pivot_y": 0.42,
+  "cut_bottom": false,
+  "zones": [
+    {
+      "type": "accessoire",
+      "cx": 234,
+      "cy": 294,
+      "r": 18
+    },
+    {
+      "type": "cheveux",
+      "cx": 80,
+      "cy": 460,
+      "r": 40
+    },
+    {
+      "type": "cheveux",
+      "cx": 330,
+      "cy": 224,
+      "r": 24
+    },
+    {
+      "type": "epaule",
+      "cx": 128,
+      "cy": 300,
+      "r": 32
+    },
+    {
+      "type": "epaule",
+      "cx": 366,
+      "cy": 290,
+      "r": 32
+    },
+    {
+      "type": "main",
+      "cx": 100,
+      "cy": 816,
+      "r": 34
+    },
+    {
+      "type": "main",
+      "cx": 434,
+      "cy": 806,
+      "r": 34
+    },
+    {
+      "type": "pieds",
+      "cx": 60,
+      "cy": 1424,
+      "r": 44
+    },
+    {
+      "type": "pieds",
+      "cx": 312,
+      "cy": 1424,
+      "r": 44
+    }
+  ],
+  "nettete": true
+}

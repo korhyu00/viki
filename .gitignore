@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.venv-piper/
+voices/*.onnx
+voices/*.onnx.json
+historique_pc.json

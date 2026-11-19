@@ -51,6 +51,18 @@ The interface is available in French, English, Spanish, Russian, Chinese, Japane
 Viki never sends anything to the internet on her own. Your conversations, memories and settings stay in
 `~/.config/viki` on your computer.
 
+## Run from source
+
+The code is in this repository. You need Python 3.10+ and PyQt6:
+
+```
+git clone https://github.com/korhyu00/viki && cd viki
+python3 compagnon.py
+```
+
+`install.sh` sets everything up on Arch-based distributions (PyQt6, Piper voice, menu entry).
+Voices, AI models and image/music engines are downloaded by Viki herself when you ask for them.
+
 ## License
 
 Viki is free software: you can redistribute it and/or modify it under the terms of the
