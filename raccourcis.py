@@ -46,8 +46,6 @@ def actions(c):
     add("repas", "🍽️", "Idée de repas", "jour", getattr(c, "suggest_meal", None), "manger cuisine recette diner")
     add("cuisine", "📅", "Repas de la semaine", "jour", (lambda: c.open_cuisine(None, 1)) if has("open_cuisine") else None,
         "planning menu semaine courses recettes cuisine")
-    add("dessin", "🎨", "Carnet de dessin", "jour", getattr(c, "open_dessin", None),
-        "dessin dessiner peindre crayon perso personnage croquis")
     add("autour", "📍", "Restos et lieux autour de moi", "jour",
         (lambda: c.nearby({"kind": "restaurant", "cuisine": None, "near": ""})) if has("nearby") else None,
         "resto restaurant manger cafe bar carte autour proche pres pharmacie boulangerie supermarche plan")
@@ -86,6 +84,8 @@ def actions(c):
     add("manga", "📚", "Traduire un manga", "media", (lambda: c.open_manga()) if has("open_manga") and C.manga else None,
         "manga traduire scan bd")
     # créer
+    add("dessin", "✏️", "Carnet de dessin", "creer", getattr(c, "open_dessin", None),
+        "dessin dessiner peindre crayon perso personnage croquis")
     add("images", "🖼️", "Atelier d'images", "creer", getattr(c, "image_dialog", None), "image dessin generer photo art")
     add("studio", "🎼", "Studio musique", "creer", getattr(c, "open_music_studio", None),
         "composer chanson creer musique paroles")

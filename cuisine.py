@@ -220,17 +220,21 @@ def _fmt(x):
     return f"{x:.1f}".replace(".", ",")
 
 
-def mettre_a_l_echelle(ingr, n):
-    """« 3 œufs » pour 2 personnes -> « 6 œufs » (seul le nombre du début change)."""
+def mettre_a_l_echelle(ingr, n, texte=None):
+    """« 3 œufs » pour 2 personnes -> « 6 œufs ». texte : le même ingrédient traduit (on y change le premier
+    nombre, où qu'il soit : « 卵 3個 » -> « 卵 6個 »)."""
+    t = ingr if texte is None else texte
     if n == 1:
-        return ingr
-    m = re.match(r"^(\d+(?:[.,]\d+)?|\d+/\d+)(\s.*)$", ingr)
+        return t
+    if not re.match(r"^\d", ingr):
+        return t if re.match(r"^(un peu|quelques|une? pincée|un filet)", ingr) else t + f" (×{n})"
+    m = re.search(r"\d+/\d+|\d+(?:[.,]\d+)?", t)
     if not m:
-        return ingr + f" (×{n})" if not re.match(r"^(un peu|quelques|une? pincée)", ingr) else ingr
+        return t + f" (×{n})"
     try:
-        return _fmt(_nombre(m.group(1)) * n) + m.group(2)
+        return t[:m.start()] + _fmt(_nombre(m.group(0)) * n) + t[m.end():]
     except Exception:
-        return ingr
+        return t
 
 
 def nom_article(ingr):
@@ -242,6 +246,7 @@ def nom_article(ingr):
                r"c\.(?: à café| à soupe)?|kg|ml|cl|g|l)(?=\s|$)\s*", "", x)
     x = re.sub(r"^(?:de |d'|du |des )", "", x)
     x = x.split("(")[0].strip()
+    x = re.sub(r"\s+(ou|et)\s+(?:un peu de |de |d'|du |des )", r" \1 ", x)
     return x
 
 
@@ -525,7 +530,7 @@ class Cuisine(QWidget):
             rs = [r for r in rs if r[0] in self.d.get("favoris", [])]
         if mots:
             def score(r):
-                t = _sa(" ".join(r[3]))
+                t = _sa(" ".join(r[3]) + " " + " ".join(tr(x) for x in r[3]))
                 return sum(1 for m in mots if m.strip() and m.strip()[:5] in t)
             rs = sorted([r for r in rs if score(r)], key=lambda r: -score(r))
         cur = self.recette[0] if self.recette else ""
@@ -533,7 +538,7 @@ class Cuisine(QWidget):
         self.choix.clear()
         for r in rs:
             self.choix.addItem(("❤️ " if r[0] in self.d.get("favoris", []) else "") +
-                               ("🌱 " if vegetarien(r) else "") + f"{r[0]} · {r[1]} min", r[0])
+                               ("🌱 " if vegetarien(r) else "") + f"{tr(r[0])} · {r[1]} min", r[0])
         if not rs:
             self.choix.addItem(tr("Aucune recette ne correspond"), "")
         i = self.choix.findData(cur)
@@ -570,7 +575,7 @@ class Cuisine(QWidget):
         _vider(self.cl)
         nom, mins, budget, ingr, etapes, pourquoi = r
         n = int(self.d.get("personnes", 1) or 1)
-        t = QLabel(nom)
+        t = QLabel(tr(nom))
         f = t.font()
         f.setPointSize(f.pointSize() + 7)
         f.setBold(True)
@@ -613,7 +618,7 @@ class Cuisine(QWidget):
             e.setFont(fe)
             e.setFixedWidth(40)
             e.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lab = QLabel(mettre_a_l_echelle(x, n))
+            lab = QLabel(mettre_a_l_echelle(x, n, tr(x)))
             lab.setWordWrap(True)
             row, col = 1 + k // 2, (k % 2) * 2
             g.addWidget(e, row, col)
@@ -647,7 +652,7 @@ class Cuisine(QWidget):
             img.setFixedSize(78, 78)
             hl.addWidget(img, 0, Qt.AlignmentFlag.AlignTop)
             vv = QVBoxLayout()
-            lab = QLabel(e)
+            lab = QLabel(tr(e))
             lab.setWordWrap(True)
             fl = lab.font()
             fl.setPointSize(fl.pointSize() + 1)
@@ -656,7 +661,7 @@ class Cuisine(QWidget):
             mn = minutes_dans(e)
             if mn:
                 bt = QPushButton(tr("⏱ Minuteur") + f" {mn} min")
-                bt.clicked.connect(lambda _=False, m=mn, nm=nom: self._minuteur(m, nm))
+                bt.clicked.connect(lambda _=False, m=mn, nm=tr(nom): self._minuteur(m, nm))
                 hb = QHBoxLayout()
                 hb.addWidget(bt)
                 hb.addStretch(1)
@@ -668,7 +673,7 @@ class Cuisine(QWidget):
         pq = QFrame()
         pq.setObjectName("pourquoi")
         pl = QVBoxLayout(pq)
-        lp = QLabel("💡 " + tr("Pourquoi c'est bien :") + " " + pourquoi)
+        lp = QLabel("💡 " + tr("Pourquoi c'est bien :") + " " + tr(pourquoi))
         lp.setWordWrap(True)
         pl.addWidget(lp)
         self.cl.addWidget(pq)
@@ -722,10 +727,10 @@ class Cuisine(QWidget):
             c.setStyleSheet("QFrame#carte { border: 2px solid #b0336a; background: #fff4f8; }"
                             if k == self.etape_lue else "")
         self.b_lire.setText(tr("▶ Étape suivante") if self.etape_lue < len(etapes) - 1 else tr("✔ Terminé"))
-        self.comp.say(f"{self.etape_lue + 1}. {etapes[self.etape_lue]}")
+        self.comp.say(f"{self.etape_lue + 1}. " + tr(etapes[self.etape_lue]))
 
     def _recette_aux_courses(self):
-        items = [nom_article(x) for x in self.recette[3]]
+        items = [tr(nom_article(x)) for x in self.recette[3]]
         try:
             self.comp._notes_cmd("courses_add", [x for x in items if x])
         except Exception:
@@ -821,9 +826,9 @@ class Cuisine(QWidget):
             for c, (k, _lab) in enumerate(MOMENTS, 1):
                 nom = (sem.get(str(j)) or {}).get(k, "")
                 r = par_nom(nom)
-                b = QPushButton((("🌱 " if vegetarien(r) else "") + r[0]) if r else tr("+ Ajouter"))
+                b = QPushButton((("🌱 " if vegetarien(r) else "") + tr(r[0])) if r else tr("+ Ajouter"))
                 b.setObjectName("case" if r else "vide")
-                b.setToolTip(f"{r[0]}\n{r[1]} min · {r[2]}" if r else "")
+                b.setToolTip(f"{tr(r[0])}\n{r[1]} min · {r[2]}" if r else "")
                 b.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
                 b.setMinimumWidth(60)
                 b.clicked.connect(lambda _=False, jj=j, kk=k, bb=b: self._menu_case(jj, kk, bb))
@@ -850,8 +855,8 @@ class Cuisine(QWidget):
         else:
             m.addAction(tr("🔀 Une idée au hasard"), lambda: self._changer(j, k))
         sm = m.addMenu(tr("📖 Choisir une recette"))
-        for r in sorted(recettes(), key=lambda r: r[0]):
-            sm.addAction(("🌱 " if vegetarien(r) else "") + r[0], lambda nm=r[0]: self._placer_dans_semaine(j, k, nm))
+        for r in sorted(recettes(), key=lambda r: tr(r[0])):
+            sm.addAction(("🌱 " if vegetarien(r) else "") + tr(r[0]), lambda nm=r[0]: self._placer_dans_semaine(j, k, nm))
         if nom:
             m.addSeparator()
             m.addAction(tr("🗑️ Retirer"), lambda: self._retirer(j, k))
@@ -918,9 +923,9 @@ class Cuisine(QWidget):
             t.setStyleSheet("font-weight:700; margin-top:8px;")
             self.cl2.addWidget(t)
             for a, n in items:
-                c = QCheckBox(a + (f"   · {n} " + tr("repas") if n > 1 else ""))
+                c = QCheckBox(tr(a) + (f"   · {n} " + tr("repas") if n > 1 else ""))
                 c.setChecked(True)
-                c.setProperty("article", a)
+                c.setProperty("article", tr(a))
                 self.cl2.addWidget(c)
                 self.cases.append(c)
         n = int(self.d.get("personnes", 1) or 1)
@@ -947,7 +952,7 @@ class Cuisine(QWidget):
         garde = set(self._choisis())
         lignes = [tr("Liste de courses")]
         for rayon, items in lc.items():
-            ok = [a for a, _n in items if a in garde]
+            ok = [tr(a) for a, _n in items if tr(a) in garde]
             if ok:
                 lignes += ["", tr(rayon)] + ["☐ " + a for a in ok]
         return "\n".join(lignes)

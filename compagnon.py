@@ -11761,6 +11761,19 @@ class Companion(QWidget):
                 self._show_text("🍽️ Idée de repas", t, "Proposée par son IA : vérifie les quantités à ton goût."),
                 self.say("Voilà une idée ! La recette est dans la fenêtre.")) if t else
                 self.say("Je n'ai pas trouvé d'idée, désolée !"), timeout=180)
+        if auto and cuisine:                              # l'heure du repas : ce qui est prévu dans la semaine
+            now = datetime.datetime.now()
+            moment = "midi" if now.hour < 16 else "soir"
+            prevu = ((self.cfg.get("cuisine") or {}).get("semaine") or {}).get(str(now.weekday()), {}).get(moment)
+            r = cuisine.par_nom(prevu) if prevu else None
+            if r:
+                self._last_meal = r
+                if self.cfg.get("repas_fenetre", True):
+                    self.open_cuisine(r)
+                return self.say((f"🍽️ Ce midi, au menu de ta semaine : {r[0]} !" if moment == "midi" else
+                                 f"🍽️ Ce soir, au menu de ta semaine : {r[0]} !") +
+                                (" La recette est à côté de moi." if self.cfg.get("repas_fenetre", True) else
+                                 " Dis « la recette » pour les étapes."))
         pool = cuisine.recettes() if cuisine else list(quotidien.REPAS)
         if vege and cuisine:
             pool = [r for r in pool if cuisine.vegetarien(r)] or pool
@@ -11770,7 +11783,7 @@ class Companion(QWidget):
         r = random.choice([x for x in pool if x is not last] or pool)
         self._last_meal = r
         intro = "🍽️ Bientôt l'heure de manger ! Idée pas chère : " if auto else "🍽️ "
-        if auto or not cuisine:
+        if not cuisine or (auto and not self.cfg.get("repas_fenetre", True)):
             return self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). Dis « la recette » pour les étapes.")
         self.open_cuisine(r)
         self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). La recette est à côté de moi !")
@@ -19937,6 +19950,8 @@ class Companion(QWidget):
             m.addAction("📍  Restos et lieux autour de moi…", lambda: self.nearby({"kind": "restaurant",
                                                                                    "cuisine": None, "near": ""}))
         m.addAction("🎮  Jouer avec elle…", lambda: QTimer.singleShot(0, self.play_menu))
+        if dessin:
+            m.addAction("✏️  Carnet de dessin…", self.open_dessin)
         if lecture:
             m.addAction("📖  Mode lecture…", lambda: self.open_reader())
         if mails and mails.load().get("adresse"):

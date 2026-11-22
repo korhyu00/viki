@@ -1124,6 +1124,8 @@ class SettingsWindow(QWidget):
             self._switch(card, "Idées de repas", "Vers midi et vers 19 h : un repas pas cher, facile et équilibré. "
                          "« Idée de repas sans viande », « la recette », « ajoute les ingrédients aux courses ».",
                          "q_repas", default=True)
+            self._switch(card, "Ouvrir la recette à l'heure du repas", "La fenêtre cuisine s'ouvre à côté d'elle "
+                         "avec la recette en images (ou le repas prévu dans ta semaine).", "repas_fenetre", default=True)
             self._switch(card, "Défi de la semaine", "Un petit défi santé chaque lundi (eau, marche, sommeil…). "
                          "Dis « défi fait » quand c'est réussi.", "q_defi", default=True)
             self._switch(card, "Me dire d'aller dormir", "Après minuit, si tu es encore sur le PC.", "q_sommeil",

@@ -32,8 +32,14 @@ def _build(code):
     import traductions
     dst = traductions.T.get(code) or []
     mp, up, tpl = {}, {}, []
-    for s, t in zip(traductions.SOURCES, dst):
-        if not t:
+    paires = list(zip(traductions.SOURCES, dst))
+    for s, t in list(paires):                       # « 🍽️ Texte… » : aussi sans l'émoji du début (tr() l'enlève)
+        if s and t and not s[:1].isalnum() and s[:1] not in "«({<'\"":
+            ms, mt = _EDGE.match(s), _EDGE.match(t)
+            if ms.group(1) and ms.group(2) and mt.group(2):
+                paires.append((ms.group(2), mt.group(2)))
+    for s, t in paires:
+        if not t or s in mp:
             continue
         mp[s] = t
         if s.upper() != s:
