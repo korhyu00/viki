@@ -176,6 +176,14 @@ try:
 except Exception as _e:        # atelier.py absent : pas de fenêtre de création d'images
     atelier = None
 try:
+    import cuisine
+except Exception as _e:        # cuisine.py absent : les recettes s'affichent en texte
+    cuisine = None
+try:
+    import dessin
+except Exception as _e:        # dessin.py absent : pas de carnet de dessin
+    dessin = None
+try:
     import media
 except Exception as _e:        # media.py absent : pas d'actu parlée, de musique à la demande ni d'images
     media = None
@@ -11746,22 +11754,55 @@ class Companion(QWidget):
         self.say("😄 " + b)
 
     def suggest_meal(self, auto=False, rapide=False, contraintes=""):
-        if contraintes and (self.ollama_ok or self.ia_remote()):
+        vege = bool(re.search(r"vegetarien|vegan|sans viande|veggie", _sans_accents(contraintes or "").lower()))
+        if contraintes and not vege and (self.ollama_ok or self.ia_remote()):
             self.say("Je te cherche une idée de repas…")
             return self.ask_ai(quotidien.ai_meal_prompt(contraintes), lambda t: (
                 self._show_text("🍽️ Idée de repas", t, "Proposée par son IA : vérifie les quantités à ton goût."),
                 self.say("Voilà une idée ! La recette est dans la fenêtre.")) if t else
                 self.say("Je n'ai pas trouvé d'idée, désolée !"), timeout=180)
-        r = quotidien.repas(rapide)
+        pool = cuisine.recettes() if cuisine else list(quotidien.REPAS)
+        if vege and cuisine:
+            pool = [r for r in pool if cuisine.vegetarien(r)] or pool
+        if rapide:
+            pool = [r for r in pool if r[1] <= 15] or pool
+        last = getattr(self, "_last_meal", None)
+        r = random.choice([x for x in pool if x is not last] or pool)
         self._last_meal = r
         intro = "🍽️ Bientôt l'heure de manger ! Idée pas chère : " if auto else "🍽️ "
-        self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). Dis « la recette » pour les étapes.")
+        if auto or not cuisine:
+            return self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). Dis « la recette » pour les étapes.")
+        self.open_cuisine(r)
+        self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). La recette est à côté de moi !")
+
+    def open_cuisine(self, recette=None, onglet=0):
+        """🍽️ La fenêtre cuisine : recette en images, planning de la semaine, liste de courses."""
+        if not cuisine:
+            return self.show_recipe()
+        w = getattr(self, "cuisine_win", None)
+        if w is None:
+            w = self.cuisine_win = cuisine.Cuisine(self, sys.modules[__name__])
+        w.ouvrir(recette, onglet)
 
     def show_recipe(self):
         r = getattr(self, "_last_meal", None) or quotidien.repas()
         self._last_meal = r
+        if cuisine:
+            return self.open_cuisine(r)
         self._show_text("🍽️ " + r[0], quotidien.recette_texte(r), "Pas cher, facile, équilibré. Prix indicatifs. "
                         "Dis « ajoute les ingrédients aux courses ».")
+
+    def open_dessin(self):
+        """🎨 Le carnet de dessin."""
+        if not dessin:
+            return self.say("Il me manque le fichier dessin.py pour ça.")
+        w = getattr(self, "dessin_win", None)
+        if w is None:
+            w = self.dessin_win = dessin.Carnet(self, sys.modules[__name__])
+            self.say("Mon carnet de dessin ! Dessine ce que tu veux, et si ça te plaît, il peut devenir un perso. ✏️")
+        w.show()
+        w.raise_()
+        w.activateWindow()
 
     def meal_to_shopping(self):
         r = getattr(self, "_last_meal", None)
@@ -12030,6 +12071,20 @@ class Companion(QWidget):
             return True
         if re.search(r"\bla recette\b", ta):
             self.show_recipe()
+            return True
+        if re.search(r"\b(?:planning|menu|repas|menus)\b.{0,20}\b(?:de la semaine|semaine)\b|\bplanning des repas\b|"
+                     r"\b(?:planifie|organise|prevois)\b.{0,15}\brepas\b", ta):
+            self.open_cuisine(None, 1)
+            return True
+        if re.search(r"\b(?:courses|liste de courses)\b.{0,15}\b(?:de la semaine|pour la semaine)\b", ta):
+            self.open_cuisine(None, 2)
+            return True
+        if re.search(r"\b(?:ouvre (?:la )?cuisine|mes recettes|livre de recettes|fenetre cuisine)\b", ta):
+            self.open_cuisine()
+            return True
+        if re.search(r"\b(?:mode dessin|carnet de dessin|je veux dessiner|on dessine|ouvre (?:le )?dessin|"
+                     r"dessiner un perso|dessine(?:r)? mon perso)\b", ta):
+            self.open_dessin()
             return True
         m = re.search(r"\b(?:idee (?:de )?repas|quoi manger|on mange quoi|qu'?est-ce qu'?on mange|idee pour manger|"
                       r"repas pas cher|je mange quoi|quoi cuisiner)\b(?:.*\b(?:avec|sans|vegetarien\w*|vegan\w*)\b(.*))?", ta)
@@ -19477,6 +19532,8 @@ class Companion(QWidget):
                 vi.addAction("😄 Une blague", self.tell_joke)
                 vi.addAction("🏃 Une pause sport", self.suggest_sport)
                 vi.addAction("🍽️ Une idée de repas pas cher", self.suggest_meal)
+                if cuisine:
+                    vi.addAction("📅 Repas de la semaine et courses…", lambda: self.open_cuisine(None, 1))
                 vi.addAction("🎯 Mon défi de la semaine", self.defi_status)
                 vi.addAction("❓ Quiz de la semaine", self.week_quiz)
             if suivi:
@@ -19501,6 +19558,8 @@ class Companion(QWidget):
                                                                                    "focus": False, "dernier": False}))
                 vi.addAction("🎨 Atelier d'images…", self.image_dialog)
                 vi.addAction("🎼 Studio musique…", self.open_music_studio)
+            if dessin:
+                vi.addAction("✏️ Carnet de dessin…", self.open_dessin)
             if liste:
                 vi.addAction("📺 Ma liste (séries, films, musique)…", self.open_liste)
             vi.addAction("📅 Notre semaine", self.week_digest)

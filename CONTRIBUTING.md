@@ -94,6 +94,8 @@ To test without a display: `QT_QPA_PLATFORM=offscreen python3 compagnon.py`.
 | `liste.py`, `services_fenetre.py`, `media.py` | "My list" (series, films, music links), streaming services, music/news/image requests. |
 | `suivi.py`, `actu_fenetre.py` | News and follows (manga, series, films), news window with images. |
 | `atelier.py` | Image studio (local Stable Diffusion or online). |
+| `dessin.py` | Drawing book: layers, symmetry, tablet pressure, .ora files, turn a drawing into a character. |
+| `cuisine.py` | Cooking window: illustrated recipes, weekly meal planner, shopping list. |
 | `lecture.py` | Reads books aloud (EPUB, PDF, TXT, DOCX, ODT…). |
 | `manga.py`, `zone.py` | Manga/comic translation; translating any area of the screen. |
 | `mails.py` | Mail notifications (IMAP). |
