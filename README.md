@@ -35,6 +35,13 @@ Nothing to install. To remove Viki, just delete the file.
 - **Around me**: restaurants, cafés, pharmacies on a map (OpenStreetMap).
 - **Your PC**: live resource usage, disk health check, Tor for privacy.
 - **Customizable**: character, voice, and round shortcut buttons next to her.
+- **Shows you on screen**: ask "show me how to…" and she circles, underlines and points at what to click (you stay in control).
+- **Understands your own words**: reminders, deadlines ("before the 10th"), notes — her AI picks the right feature, and asks before changing anything.
+- **Remembers your files**: pick folders (notes, courses, PDFs) and ask "in my notes, …".
+- **Keeps you safe**: right-click a file → "Is it safe?", Alt+E explains a terminal command before you run it, copied passwords are cleared.
+- **Learn with her**: guided tours of apps, quizzes and study sheets from your own courses.
+- **Cursor mode**: her own pointer with your character's face, and a wheel of actions around it.
+- **Calm**: she stays focused on your request, and you choose what she tells you on her own.
 
 ## Requirements
 

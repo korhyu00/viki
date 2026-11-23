@@ -43,6 +43,9 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
+import difflib
+import zipfile
 import urllib.request
 import wave
 from array import array
@@ -131,6 +134,36 @@ try:
     import vieprivee
 except Exception as _e:        # vieprivee.py absent : pas de centre vie privée ni de Wikipédia
     vieprivee = None
+try:
+    import memoire_fichiers
+except Exception as _e:
+    print("memoire_fichiers.py :", _e, file=sys.stderr)
+    memoire_fichiers = None
+try:
+    import outils_ia
+except Exception as _e:
+    print("outils_ia.py :", _e, file=sys.stderr)
+    outils_ia = None
+try:
+    import clic_fichiers
+except Exception as _e:
+    print("clic_fichiers.py :", _e, file=sys.stderr)
+    clic_fichiers = None
+try:
+    import assistant_jour
+except Exception as _e:
+    print("assistant_jour.py :", _e, file=sys.stderr)
+    assistant_jour = None
+try:
+    import curseur_viki
+except Exception as _e:
+    print("curseur_viki.py :", _e, file=sys.stderr)
+    curseur_viki = None
+try:
+    import guide
+except Exception as _e:
+    print("guide.py :", _e, file=sys.stderr)
+    guide = None
 try:
     import pratique
 except Exception as _e:        # pratique.py absent : pas d'agenda en ligne, de lecture de page ni d'écran
@@ -383,6 +416,8 @@ if apparence:
     apparence.CACHE_DIR = BASE_CONFIG_DIR / "apparence_cache"
 if mods:
     mods.DIR = DATA_DIR / "mods"
+if memoire_fichiers:
+    memoire_fichiers.INDEX = DATA_DIR / "memoire_fichiers.json.gz"
 _MOD_CHAR_DIRS = []            # personnages venus des mods actifs (mis à jour par mods_appliquer)
 if atelier:
     atelier.ENGINE_DIR = DATA_DIR / "comfyui"
@@ -475,6 +510,14 @@ DEFAULT_CONFIG = {
     "agenda_auto": True,          # cherche les calendriers locaux (KOrganizer, Evolution…)
     "agenda_avance": 15,          # prévient X minutes avant un rendez-vous
     "pc_watch": True,             # disque presque plein, carte graphique trop chaude…
+    "clip_malin": True,           # erreur / adresse / autre langue copiée : elle propose son aide
+    "outils_ia": True,            # son IA lance les fonctions de Viki quand on lui demande avec ses mots
+    "memoire_dossiers": [],       # dossiers que Viki peut lire (📚 mémoire de tes fichiers)
+    "clip_secret": True,          # mot de passe / clé copié : presse-papiers vidé au bout d'une minute
+    "telechargements_veille": True,   # un fichier arrive dans Téléchargements : résumer, vérifier, ouvrir l'archive
+    "partage_cacher": True,       # partage d'écran (visio, stream) : elle se cache
+    "bilan_soir": True,           # le soir : le bilan de ta journée
+    "humeurs": True,              # son humeur du jour et ses petites envies
     "updates_check": False,       # vérifie les mises à jour (utilise internet) toutes les 6 h
     "activite": True,             # commente ce que tu fais (jeu, travail, heure tardive, musique en boucle)
     "journal": True,              # le soir, elle te demande comment s'est passée ta journée
@@ -876,6 +919,12 @@ def load_config():
         r = list(cfg.get("ronds") or [])
         if r and "ressources" not in r:
             r.append("ressources")
+            cfg["ronds"] = r
+    if not cfg.get("ronds_v6"):                # nouveau rond 🖱️ Mode curseur (une seule fois)
+        cfg["ronds_v6"] = True
+        r = list(cfg.get("ronds") or [])
+        if r and "curseur" not in r:
+            r.insert(r.index("pratique") + 1 if "pratique" in r else max(0, len(r) - 2), "curseur")
             cfg["ronds"] = r
     if not cfg.get("ronds_v4"):                # nouveau rond 💪 Forme (une seule fois)
         cfg["ronds_v4"] = True
@@ -1675,13 +1724,18 @@ def parse_reminder(text):
         hh, mm = int(m2.group(1)), int(m2.group(2) or 0)
         if hh < 24 and mm < 60:
             when = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-            if when <= now:
+            if re.search(r"apr[eè]s[- ]demain", t):
+                when += datetime.timedelta(days=2)
+            elif re.search(r"\bdemain\b", t):
+                when += datetime.timedelta(days=1)
+            elif when <= now:
                 when += datetime.timedelta(days=1)
     if not when:
         return None
     rest = re.sub(r".*?(rappel+e[- ]?moi|fais[- ]moi penser)", "", t, count=1)
     rest = re.sub(r"dans\s+\S+\s*(?:min|minutes?|mn|h|heures?|s|secondes?)\b", " ", rest)
     rest = re.sub(r"(?:à|a)\s+\d{1,2}\s*(?:h|:)\s*\d{0,2}", " ", rest)
+    rest = re.sub(r"\b(?:apr[eè]s[- ])?demain\b", " ", rest)
     rest = re.sub(r"^\s*(?:de\b|d'|que\b|qu'|pour\b|à\b)\s*", "", rest.strip())
     what = re.sub(r"\s+", " ", rest).strip(" .!?,")
     return when.timestamp(), what or "ce que tu m'as demandé"
@@ -1864,6 +1918,10 @@ RONDS_CATALOGUE = {
     "salon": ("📺", "Salon", "#e5484d", "Ce soir : reprendre ta série, et tes services (Netflix, Disney+, Spotify…)"),
     "zone": ("🔲", "Traduire une zone", "#3b7bd0", "Encadre un morceau d'écran : je le lis et je le traduis"),
     "bug": ("🐞", "Signaler un bug", "#c4413f", "Prépare un rapport (sans rien de personnel) pour GitHub"),
+    "detente": ("🌿", "Coin détente", "#6aa87a", "Pêche, jardin et dessin du jour, tranquillement"),
+    "dessin": ("✏️", "Dessin", "#d0782f", "Le carnet de dessin (et l'animation)"),
+    "guide": ("👉", "Montre-moi", "#ff4081", "Elle entoure et t'explique ce qu'il y a sur ton écran"),
+    "curseur": ("🖱️", "Mode curseur", "#ff4f8b", "Le curseur de Viki et sa roue autour de la souris"),
 }
 RONDS_TAILLES = {"petit": (14, 38), "normal": (17, 46), "grand": (21, 56)}
 # styles « à la Apple » : (rond, bord, icône, survol, anneau actif, menu…)
@@ -1887,7 +1945,7 @@ RONDS_STYLES = {
 # pictogrammes fins (police Tabler Icons, licence MIT) pour les ronds
 RONDS_ICONES = {
     "ecrire": 0xeb04, "texte": 0xebbe, "pratique": 0xeae8, "jouer": 0xf1d2, "reglages": 0xeb20,
-    "traduire": 0xebbe, "corriger": 0xf2a6, "autour": 0xeeff, "rappel": 0xea04, "ecran": 0xea89,
+    "traduire": 0xebbe, "guide": 0xef4f, "curseur": 0xf265, "corriger": 0xf2a6, "autour": 0xeeff, "rappel": 0xea04, "ecran": 0xea89,
     "micro": 0xeaf0, "image": 0xeb01, "musique": 0xeafc, "notes": 0xeb6e, "manga": 0xea39, "galerie": 0xeb0a,
     "presse": 0xea6f, "apparence": 0xec0a, "concentration": 0xeb35, "profil": 0xf263, "modele": 0xf59f,
     "disques": 0xea88, "tor": 0xed58, "modeles": 0xeb10, "fichier": 0xec91, "aujourdhui": 0xeb30, "notifs": 0xea35, "forme": 0xeff0, "services": 0xeafa, "zone": 0xfcc3, "bug": 0xea48, "salon": 0xea8d, "_perso": 0xeb2e, "_mod": 0xeb10,
@@ -2001,14 +2059,25 @@ def _son_clic_path():
         return p
     except Exception:
         return None
-RONDS_DEFAUT = ["ecrire", "fichier", "aujourdhui", "forme", "texte", "pratique", "salon", "reglages", "ressources"]
+MUETS_TYPES = [   # 🔕 ce qu'elle peut te dire d'elle-même (clé, libellé)
+    ("disque", "Disque presque plein"), ("chaleur", "Carte graphique ou processeur trop chauds"),
+    ("services", "Services du système en panne"), ("majs", "Mises à jour disponibles"),
+    ("mails", "Nouveaux mails"), ("notifs", "Les notifications du bureau"),
+    ("telechargements", "Les téléchargements qui arrivent"), ("presse", "Ce que je copie (erreur, adresse, langue)"),
+    ("envies", "Ses humeurs, ses envies, la neige"), ("accueil", "L'accueil quand je reviens"),
+    ("bilan", "Le bilan et « ta journée » du soir"), ("souvenirs", "« Je retiens que… »"),
+    ("visite", "Les visites guidées proposées"), ("spontane", "Ses petites phrases spontanées"),
+    ("bugs", "Proposer d'envoyer un rapport quand elle a un bug"),
+]
+RONDS_DEFAUT = ["ecrire", "fichier", "aujourdhui", "forme", "texte", "pratique", "curseur", "salon", "reglages", "ressources"]
 RONDS_ACTIONS = {"reglages": "open_settings", "micro": "toggle_mic", "image": "open_studio",
                  "musique": "open_music_studio", "notes": "open_notes", "manga": "open_manga",
                  "galerie": "open_gallery", "presse": "open_clip_history", "apparence": "open_look",
                  "rappel": "add_reminder_dialog", "disques": "disks_health", "tor": "open_tor",
-                 "modeles": "open_modeles", "fichier": "open_drop_window", "aujourdhui": "open_aujourdhui",
+                 "modeles": "open_modeles", "fichier": "open_drop_window", "guide": "guide_demander", "curseur": "mode_curseur_menu", "aujourdhui": "open_aujourdhui",
                  "notifs": "open_notifs", "services": "open_services",
-                 "zone": "translate_zone", "bug": "signaler_bug", "salon": "open_services"}
+                 "zone": "translate_zone", "bug": "signaler_bug", "salon": "open_services",
+                 "detente": "open_detente", "dessin": "open_dessin"}
 
 
 def _menu_visible(m):
@@ -2599,7 +2668,11 @@ class RondsBar(QWidget):
             em = m.addMenu("😊  Émotes")
             em.setStyleSheet(m.styleSheet())
             self._emote_grid(m, em)
-            m.addAction("🎮  Jouer avec elle", c.play_menu)
+            m.addSeparator()
+            for lab, k in c.GAMES:
+                m.addAction(lab, lambda kk=k: c.start_game(kk))
+            m.addSeparator()
+            m.addAction("🌿  Coin détente (pêche, jardin, dessin du jour)", lambda: c.open_detente())
         self.active = rid
         self.update()
         self._menu = m                                  # garder le menu en vie pendant qu'il est ouvert
@@ -3139,7 +3212,7 @@ class InputBox(QWidget):
         if abs(x - self.x()) > 1 or abs(y - self.y()) > 1:
             self.move(x, y)
 
-    def open(self):
+    def open(self, activer=True):
         self.adjustSize()
         if self.mini:
             self.resize(270, self.sizeHint().height())
@@ -3150,10 +3223,12 @@ class InputBox(QWidget):
         else:
             self.resize(max(380 if self.compact else 560, self.sizeHint().width()), self.sizeHint().height())
         self.move(*self.target())
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not activer)
         self.show()
         self.raise_()
-        self.activateWindow()
-        self.edit.setFocus()
+        if activer:
+            self.activateWindow()
+            self.edit.setFocus()
         self._follow.start(30)
         QTimer.singleShot(60, self._poke)
 
@@ -5246,7 +5321,7 @@ class Companion(QWidget):
         self.agenda = extras.Agenda() if extras else None
         self.agenda_warned = set()
         self.agenda_day_said = ""
-        self.pc_warned = {}
+        self.pc_warned = dict(self.cfg.get("pc_avertis") or {})
         self._next_pc = 0.0
         self.pet = extras.Pet(self.cfg.get("pet")) if (extras and self.cfg.get("pet")) else None
         self.listener = None
@@ -5351,6 +5426,9 @@ class Companion(QWidget):
             self.cfg["scale_h"] = 0
             if float(self.cfg.get("volume", 1.0)) >= 0.99:
                 self.cfg["volume"] = 0.35
+        if not self.cfg.get("defauts_v5"):           # les boutons Résumer / Traduire… : remplacés par le presse-papiers malin
+            self.cfg["defauts_v5"] = True
+            self.cfg["clip_watch"] = False
         if not self.cfg.get("defauts_v4"):           # plus de boutons Résumer / Traduire… au-dessus d'elle quand on copie
             self.cfg["defauts_v4"] = True
             self.cfg["clip_watch"] = False
@@ -5423,6 +5501,18 @@ class Companion(QWidget):
                 threading.Thread(target=self._brain_loop, daemon=True).start()
             if self.cfg.get("notif_lire"):
                 self._start_notifs()
+            QTimer.singleShot(20_000, self._dl_veille)                    # 📥 téléchargements
+            if not self.first_run:
+                QTimer.singleShot(15 * 60_000, self._bugs_message_unique)   # 🐞 le petit mot du développeur (une fois)
+            if curseur_viki:
+                QTimer.singleShot(4000, lambda: curseur_viki.AVATAR.__setitem__("img", self._avatar_viki()))
+                if self.cfg.get("roue_deux_boutons"):
+                    QTimer.singleShot(5000, lambda: self.roue_deux_boutons(True, au_demarrage=True))
+            threading.Thread(target=self._partage_loop, daemon=True).start()   # 🙈 partage d'écran
+            if memoire_fichiers and self.cfg.get("memoire_dossiers"):     # 📚 relire les fichiers changés
+                QTimer.singleShot(90_000, self.memoire_indexer)
+                self._memoire_tm = QTimer(self, timeout=self.memoire_indexer)
+                self._memoire_tm.start(3 * 3600 * 1000)
             if self.cfg.get("wake"):
                 QTimer.singleShot(3000, lambda: self.set_wake(self.cfg["wake"], announce=False))
             if self.cfg.get("invites"):
@@ -5633,10 +5723,10 @@ class Companion(QWidget):
             QTimer.singleShot(7000, lambda: self.say("Je suis en mode fantôme (transparente). Pour me rendre normale : "
                                                      "mon icône près de l'horloge → 👻 Sortir du mode fantôme, "
                                                      "ou dis « sors du mode fantôme »."))
-        QTimer.singleShot(12000, self._git_morning)          # le point du matin sur les projets de code
+        QTimer.singleShot(12000, lambda: self.apres_focus(self._git_morning))   # le point du matin (code)
         if not self.voice_model and not GUEST and not natural_voice_installed():
-            QTimer.singleShot(9000, lambda: self.say("Je n'ai pas encore ma vraie voix : va dans Réglages → Voix "
-                                                     "→ « Télécharger sa voix » (60 Mo, une seule fois)."))
+            QTimer.singleShot(9000, lambda: self.apres_focus(lambda: self.say(
+                "Je n'ai pas encore ma vraie voix : va dans Réglages → Voix → « Télécharger sa voix » (60 Mo, une seule fois).")))
 
     # ---------- personnage
     def _load_anim(self, img_dir):
@@ -5645,6 +5735,19 @@ class Companion(QWidget):
         t = self.__dict__.get("_anim_timer")
         if t is not None:
             t.stop()
+        fab = mods.type_personnage(self.char.get("type")) if mods else None
+        if fab is not None:                           # un genre de personnage ajouté par une extension
+            try:
+                self.vanim = {"rendu": fab(img_dir, self.char), "fps": 12.0, "parle": [], "fps_parle": 12.0,
+                              "repos": []}
+                if t is None:
+                    t = self.__dict__["_anim_timer"] = QTimer(self)
+                    t.timeout.connect(self._anim_tick)
+                t.start(83)
+            except Exception:
+                log_error("Personnage d'une extension")
+                self.vanim = None
+            return
         a = self.char.get("anim")
         if not a or not anime_perso or self.outfit:
             return
@@ -5674,6 +5777,8 @@ class Companion(QWidget):
         """L'image de l'animation à afficher maintenant (mise à la taille une fois, puis gardée)."""
         a = self.vanim
         now = time.monotonic()
+        if a.get("rendu") is not None:
+            return a["rendu"].frame(now, self.cw, self.ch, getattr(self, "dpr", 1.0))
         talk = bool(a["parle"]) and self._talking(now)
         seq, fps, tag = (a["parle"], a["fps_parle"], "p") if talk else (a["repos"], a["fps"], "r")
         i = 0 if self.sleeping else int(now * fps) % len(seq)
@@ -6404,6 +6509,9 @@ class Companion(QWidget):
         fu, fv = fcx / self.cw, fcy / self.ch
         wf = max(0.12, 1 - fv) ** 0.8 if not cut else max(0.25, 1 - 0.7 * fv)
         cell_w = self.cw / gw
+        if len(verts) < 2 or not cells:                 # perso minuscule ou très plat : pas de relief
+            self.mesh = None
+            return
         min_h = min(verts[j + 1][0][1] - verts[j][0][1] for j in range(len(verts) - 1))
         self.mesh = {"verts": verts, "cells": cells, "pivot": piv, "ed": ed,
                      "face": (self._map_at(self.relief, fu, fv) - 0.35) * wf,
@@ -7578,6 +7686,16 @@ class Companion(QWidget):
             text = i18n.tr_to(text, self.cfg.get("langue", "fr")).strip() or text
         if getattr(self, "brain", None) and text != "…":
             self.brain.said(text)
+        aa = self.__dict__.get("_auto_attente")
+        if aa and time.monotonic() - aa[1] < 3 and text != "…":   # 🔕 un message spontané : « ne me dis plus ça »
+            self._dernier_auto = (aa[0], time.monotonic())
+            self._auto_attente = None
+        if text != "…" and self.concentree():          # sa réponse à ta demande : on reste concentrées un peu
+            now_m = time.monotonic()
+            self._focus_until = min(max(self._focus_until, now_m + 25), self.__dict__.get("_focus_debut", now_m) + 240)
+            sv = self.__dict__.get("_suivi")
+            if sv and not sv[-1][2]:
+                sv[-1][2] = text[:160]
         if text != "…" and len(text) > 2:                # tout ce qu'elle dit (pour « Ce qu'elle t'a dit »)
             h = self.__dict__.setdefault("historique", [])
             if not h or h[-1][1] != text:
@@ -9234,10 +9352,10 @@ class Companion(QWidget):
         rb = self.__dict__.get("ronds_bar")
         return rb is not None and rb.isVisible() and "ressources" in rb.ids()
 
-    def open_input(self):
+    def open_input(self, activer=True):
         if not self.input_box:
             self.input_box = InputBox(self)
-        self.input_box.open()
+        self.input_box.open(activer)
 
     # ---------- émotes
     def _spawn_emoji(self, ch, n=2):
@@ -9398,11 +9516,21 @@ class Companion(QWidget):
     def handle_message(self, text):
         """Message tapé dans le petit champ : commandes rapides d'abord, sinon discussion."""
         self.last_interaction = time.monotonic()
+        self._focus_debut = time.monotonic()             # 🎯 elle se concentre sur ta demande
+        self._focus_until = self._focus_debut + 90
+        sv = self.__dict__.setdefault("_suivi", [])
+        sv.append([time.time(), text.strip()[:200], ""])
+        del sv[:-12]
         self._user_ask = time.monotonic()
         if getattr(self, "learn", None):
             self.learn.note_message(text)
         self.sleeping = False
         self.cfg["stats"]["messages"] = self.cfg["stats"].get("messages", 0) + 1
+        _mj = self.cfg.setdefault("msgs_jour", {})
+        _j = datetime.date.today().isoformat()
+        _mj[_j] = _mj.get(_j, 0) + 1
+        for _k in sorted(_mj)[:-7]:
+            _mj.pop(_k, None)
         if extras:
             self.add_xp(2)
         if self.pending_confirm:
@@ -9457,6 +9585,16 @@ class Companion(QWidget):
             self._brain_after(text, True)
             self.queue(acts, random.choice(["D'accord !", "Tout de suite !", "C'est parti !"]))
             return
+        _ta = _sans_accents(text.lower().strip())
+        _recent = len(self.__dict__.get("_suivi", [])) >= 2 and time.time() - self._suivi[-2][0] < 15 * 60
+        if outils_ia and self.ollama_ok and self.cfg.get("outils_ia", True) \
+                and (outils_ia.semble_demande(_ta) or (_recent and outils_ia.semble_suite(_ta))):
+            self._routeur(text)                        # son IA choisit la bonne fonction (sinon : on discute)
+            return
+        self._message_suite(text)
+
+    def _message_suite(self, text):
+        """La fin de handle_message : commandes ratées, ordres, Wikipédia, discussion."""
         if getattr(self, "brain", None) and self._brain_after(text, False):
             return
         t = text.lower()
@@ -10105,6 +10243,8 @@ class Companion(QWidget):
             f"{datetime.datetime.fromtimestamp(r['t']).strftime('%H:%M')} {r['txt']}" for r in rs[:4]) + "."
 
     def _check_reminders(self):
+        if self.concentree() and time.monotonic() - self.__dict__.get("_focus_debut", 0) < 120:
+            return                                      # le rappel attend la fin de ta demande (2 min au plus)
         rs = self.cfg.get("rappels", [])
         due = [r for r in rs if r["t"] <= time.time()]
         if not due:
@@ -10679,7 +10819,7 @@ class Companion(QWidget):
         anonyme = self.ia_remote() and ia_api.conf_from().get("anonyme")
         if not anonyme and (not self.ia_remote() or len(text) > 25):   # en ligne : pas d'appel en plus pour « ok »…
             threading.Thread(target=self._extract_facts, args=(text,), daemon=True).start()
-        payload = {"model": self.cfg["ollama_model"], "stream": False,
+        payload = {"model": self.modele_discussion(), "stream": False,
                    "messages": [{"role": "system", "content": system}] + self.chat_history}
         payload["keep_alive"] = self._keep_alive()
         if self.cfg.get("stream_chat", True):
@@ -10698,7 +10838,19 @@ class Companion(QWidget):
         self.bridge.chat_answer.emit(reply)
 
     # ---------- souris
+    def _norm(self, pos):
+        r = self.body_rect()
+        return ((pos.x() - r.x()) / max(1, r.width()), (pos.y() - r.y()) / max(1, r.height()))
+
     def mousePressEvent(self, e):
+        rd = self._rendu()
+        if rd is not None and hasattr(rd, "appui") and e.button() == Qt.MouseButton.LeftButton:
+            try:
+                if rd.appui(*self._norm(e.position())):   # l'extension le prend (on la prend dans la main…)
+                    self._rendu_tire = {"start": e.position(), "moved": False}
+                    return
+            except Exception:
+                log_error("Extension (souris)")
         if self.pet and e.button() == Qt.MouseButton.LeftButton and self.pet.rect().contains(e.position()):
             self.pet_poke()
             return
@@ -10719,6 +10871,15 @@ class Companion(QWidget):
             self.open_input()
 
     def mouseMoveEvent(self, e):
+        tire = self.__dict__.get("_rendu_tire")
+        if tire is not None:
+            if (e.position() - tire["start"]).manhattanLength() > 6:
+                tire["moved"] = True
+            rd = self._rendu()
+            if rd is not None and tire["moved"] and hasattr(rd, "glisse"):
+                rd.glisse(*self._norm(e.position()))
+                self.update()
+            return
         if self.obj_drag:
             od = self.obj_drag
             if (e.position() - od["start"]).manhattanLength() > 5:
@@ -10770,6 +10931,16 @@ class Companion(QWidget):
             self._resize_object(slug, 1.1 if e.angleDelta().y() > 0 else 1 / 1.1)
 
     def mouseReleaseEvent(self, e):
+        tire = self.__dict__.pop("_rendu_tire", None)
+        if tire is not None and e.button() == Qt.MouseButton.LeftButton:
+            rd = self._rendu()
+            if rd is not None and hasattr(rd, "lache"):
+                try:
+                    rd.lache(*self._norm(e.position()), tire["moved"])
+                except Exception:
+                    log_error("Extension (souris)")
+            self.update()
+            return
         if self.obj_drag and e.button() == Qt.MouseButton.LeftButton:
             od, self.obj_drag = self.obj_drag, None
             slug = od["hit"][1] if od["hit"][0] == "porte" else od["hit"][1]["slug"]
@@ -10810,6 +10981,13 @@ class Companion(QWidget):
                     self.say_from("deplace")
         else:
             now = time.monotonic()
+            rd = self._rendu()
+            if rd is not None and hasattr(rd, "clic"):   # un clic dans le personnage d'extension
+                try:
+                    if rd.clic(*self._norm(e.position())):
+                        return
+                except Exception:
+                    log_error("Extension (souris)")
             self.toggle_ronds()
             self.click_times = [c for c in self.click_times if now - c < 4] + [now]
             if len(self.click_times) >= 7 and now > self.angry_until + 8:
@@ -11521,12 +11699,15 @@ class Companion(QWidget):
                                              headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=5) as r:
                     info = json.load(r)
+                if re.search(r"translategemma|embed|whisper|tts|rerank|guard", n, re.I):
+                    continue                      # des modèles spécialisés (traduction…) : ils plantent sur une image
                 if "vision" in (info.get("capabilities") or []) or re.search(r"vl|llava|vision|minicpm-v|gemma3",
                                                                               n, re.I):
                     out.append(n)
             except Exception:
-                if re.search(r"vl|llava|vision|minicpm-v", n, re.I):
+                if re.search(r"vl|llava|vision|minicpm-v", n, re.I) and not re.search(r"translategemma", n, re.I):
                     out.append(n)
+        out.sort(key=lambda n: 0 if re.search(r"qwen.*vl|llava|minicpm", n, re.I) else 1)   # les vrais « voyants » d'abord
         return out
 
     def vision_ready(self):
@@ -11536,6 +11717,8 @@ class Companion(QWidget):
         vm = self.vision_models()
         if want and want in vm:
             return True
+        if want and want not in vm:
+            self.cfg.pop("manga_vision", None)           # l'ancien choix ne voit pas les images (ou n'existe plus)
         if vm:
             self.cfg["manga_vision"] = vm[0]
             return True
@@ -11709,7 +11892,17 @@ class Companion(QWidget):
                     q[key] = today
                     self.suggest_meal(auto=True)
                     return True
-        # 4. une blague de temps en temps
+        # 4. proposer de jouer ou d'aller au coin détente (de temps en temps, jamais en concentration)
+        if self.cfg.get("q_jeux", True) and 10 <= now.hour < 22 and not self.in_focus() \
+                and mono - self.last_interaction < 15 * 60:
+            nxt = getattr(self, "_q_jeu_next", None)
+            if nxt is None:
+                self._q_jeu_next = mono + random.uniform(60, 150) * 60
+            elif mono > nxt:
+                self._q_jeu_next = mono + random.uniform(120, 240) * 60
+                self.propose_jeu()
+                return True
+        # 5. une blague de temps en temps
         if self.cfg.get("q_blagues", True):
             nxt = getattr(self, "_q_joke_next", None)
             if nxt is None:
@@ -11719,6 +11912,38 @@ class Companion(QWidget):
                 self.tell_joke()
                 return True
         return False
+
+    def propose_jeu(self):
+        """Une proposition spontanée : récolte prête, dessin du jour, ou une petite partie."""
+        d = self.cfg.get("detente") or {}
+        pret = False
+        try:
+            import detente
+            for pl in d.get("jardin") or []:
+                if pl:
+                    g = next((x for x in detente.GRAINES if x[0] == pl["graine"]), None)
+                    a = pl.get("arrose") or 0
+                    bonus = max(0.0, min(time.time(), a + 4 * 3600) - max(pl["t"], a)) if a else 0.0
+                    if g and (time.time() - pl["t"] + bonus) >= g[3] * 60:
+                        pret = True
+            dessin_fait = (d.get("jour") or {}).get("date") == datetime.date.today().isoformat() and \
+                (d.get("jour") or {}).get("dessin")
+            theme = detente.theme_du_jour()
+        except Exception:
+            dessin_fait, theme = True, ""
+        choix = []
+        if pret:
+            choix.append(("Ton jardin est prêt à récolter ! On va voir ? (oui / non)", lambda: self.open_detente(1)))
+        if theme and not dessin_fait and datetime.datetime.now().hour >= 14:
+            lg = self.cfg.get("langue", "fr")
+            choix.append((f"Le dessin du jour, c'est « {i18n.tr_to(theme, lg)} ». Tu tentes ? (oui / non)",
+                          lambda: self.open_detente(2)))
+        choix.append(("Petite pause pêche au coin détente ? 🎣 (oui / non)", lambda: self.open_detente(0)))
+        lab, k = random.choice(self.GAMES[5:] + self.GAMES[:5])
+        nom = re.sub(r"^\W+", "", lab)
+        choix.append((f"Ça te dit une petite partie ? {i18n.tr_to(nom, self.cfg.get('langue', 'fr'))} ! (oui / non)", lambda kk=k: self.start_game(kk)))
+        q, fn = choix[0] if pret else random.choice(choix)
+        self.ask_yes(q, fn)
 
     def teach_fact(self, sujet="", auto=False):
         q = self.cfg.setdefault("quotidien", {})
@@ -11788,14 +12013,14 @@ class Companion(QWidget):
         self.open_cuisine(r)
         self.say(f"{intro}{r[0]} ({r[1]} min, {r[2]} la part). La recette est à côté de moi !")
 
-    def open_cuisine(self, recette=None, onglet=0):
+    def open_cuisine(self, recette=None, onglet=0, sportif=False):
         """🍽️ La fenêtre cuisine : recette en images, planning de la semaine, liste de courses."""
         if not cuisine:
             return self.show_recipe()
         w = getattr(self, "cuisine_win", None)
         if w is None:
             w = self.cuisine_win = cuisine.Cuisine(self, sys.modules[__name__])
-        w.ouvrir(recette, onglet)
+        w.ouvrir(recette, onglet, sportif)
 
     def show_recipe(self):
         r = getattr(self, "_last_meal", None) or quotidien.repas()
@@ -11804,6 +12029,23 @@ class Companion(QWidget):
             return self.open_cuisine(r)
         self._show_text("🍽️ " + r[0], quotidien.recette_texte(r), "Pas cher, facile, équilibré. Prix indicatifs. "
                         "Dis « ajoute les ingrédients aux courses ».")
+
+    def open_detente(self, onglet=None):
+        """🌿 Le coin détente : pêche, jardin, dessin du jour."""
+        try:
+            import detente
+        except Exception:
+            return self.say("Il me manque le fichier detente.py pour ça.")
+        w = getattr(self, "detente_win", None)
+        if w is None:
+            w = self.detente_win = detente.Detente(self, sys.modules[__name__])
+            self.say("Bienvenue dans le coin détente ! On pêche, on jardine, on dessine… tranquillement. 🌿")
+        w.ouvrir(onglet)
+
+    def _rendu(self):
+        """Le rendu d'un personnage venu d'une extension (appartement vivant…), sinon None."""
+        a = self.__dict__.get("vanim")
+        return a.get("rendu") if a else None
 
     def open_dessin(self):
         """🎨 Le carnet de dessin."""
@@ -12078,6 +12320,11 @@ class Companion(QWidget):
         if re.search(r"\b(?:une blague|raconte(?:-moi)? une blague|fais(?:-moi)? rire|blague)\b", ta):
             self.tell_joke()
             return True
+        if cuisine and re.search(r"\b(?:repas|manger|recette|plat|menu)s?\b.{0,25}\b(?:sport|muscu|sportif|proteine|"
+                                 r"recup|recuperation|avant l'effort|apres l'effort)", ta):
+            self.open_cuisine(None, 0, sportif=True)
+            self.say("Voilà des idées spécial sport ! 💪")
+            return True
         if re.search(r"\b(?:sport|exercice|bouger|etirement)\b", ta) and \
                 re.search(r"\b(?:idee|propose|donne|un|fais|on fait|quoi)\b", ta):
             self.suggest_sport()
@@ -12095,6 +12342,11 @@ class Companion(QWidget):
         if re.search(r"\b(?:ouvre (?:la )?cuisine|mes recettes|livre de recettes|fenetre cuisine)\b", ta):
             self.open_cuisine()
             return True
+        if re.search(r"\b(?:coin detente|mode detente|on va pecher|allons pecher|je veux pecher|la peche|mon jardin|"
+                     r"mon potager|dessin du jour)\b", ta):
+            self.open_detente(2 if "dessin" in ta else 1 if re.search(r"jardin|potager", ta) else
+                              0 if "pech" in ta else None)
+            return True
         if re.search(r"\b(?:mode dessin|carnet de dessin|je veux dessiner|on dessine|ouvre (?:le )?dessin|"
                      r"dessiner un perso|dessine(?:r)? mon perso)\b", ta):
             self.open_dessin()
@@ -12105,6 +12357,9 @@ class Companion(QWidget):
             extra = ""
             if m.group(1) is not None:
                 extra = re.search(r"\b(avec|sans|vegetarien\w*|vegan\w*)\b.*", ta).group(0)
+            if cuisine and re.search(r"\b(?:sport|muscu|sportif|proteine|recup)", ta):
+                self.open_cuisine(None, 0, sportif=True)
+                return True
             self.suggest_meal(rapide="rapide" in ta, contraintes=extra)
             return True
         return False
@@ -12852,9 +13107,22 @@ class Companion(QWidget):
             self.brain.pending_fact = None
         if delay:
             QTimer.singleShot(delay, lambda: getattr(self, "_pending_yes", None) and
-                              self._pending_yes[0] is fn and self.say(question))
+                              self._pending_yes[0] is fn and (self.say(question), self._barre_pour_repondre()))
         else:
             self.say(question)
+            self._barre_pour_repondre()
+
+    def _barre_pour_repondre(self):
+        """Une question oui / non : la barre reste ouverte pour répondre (sans voler le clavier si tu fais autre chose)."""
+        if GUEST or self.fs_hidden:
+            return
+        try:
+            b = self.__dict__.get("input_box")
+            if b is not None and b.isVisible():
+                return
+            self.open_input(activer=self.concentree())
+        except Exception:
+            log_error("barre pour répondre")
 
     def _pending_yes_check(self, text):
         p = getattr(self, "_pending_yes", None)
@@ -13316,6 +13584,1248 @@ class Companion(QWidget):
             self._bg(ask, lambda t: self.say(t[:900]) if isinstance(t, str) and t else
                      self.say("Je n'ai pas réussi à analyser l'écran" + (f" : {str(t)[:80]}" if isinstance(t, Exception) else ".")))
         self._bg(shoot, got)
+
+    # ---------- 🖱️ le mode curseur
+    def _point_capture(self, img, pt):
+        """Un point de l'écran (coordonnées du bureau) -> pixel de la capture."""
+        ecran = QApplication.primaryScreen()
+        virt, prim = ecran.virtualGeometry(), ecran.geometry()
+        sx, sy = img.width() / max(1, virt.width()), img.height() / max(1, virt.height())
+        if abs(sx - sy) > 0.05:
+            sx, sy = img.width() / max(1, prim.width()), img.height() / max(1, prim.height())
+            return (pt.x() - prim.x()) * sx, (pt.y() - prim.y()) * sy
+        return (pt.x() - virt.x()) * sx, (pt.y() - virt.y()) * sy
+
+    def _souris(self):
+        return curseur.pos() if curseur else QCursor.pos()
+
+    def remplir_menu_curseur(self, m):
+        """Les entrées du mode curseur (pour le clic droit, le rond et la commande)."""
+        tr_ = (lambda t: i18n.tr(t)) if i18n else (lambda t: t)
+        if curseur_viki.actif():
+            m.addAction(tr_("↩️ Remettre mon curseur d'avant"), self.curseur_remettre)
+        else:
+            a = m.addAction(tr_("💖 Le curseur de Viki (pointeur rose avec son visage)"), self.curseur_activer)
+            f = a.font()
+            f.setBold(True)
+            a.setFont(f)
+        m.addAction(tr_("🎡 La roue de Viki autour de la souris (Meta+Alt+Espace)"), self.roue_curseur)
+        m.addAction(tr_("⌨️ Activer le raccourci Meta+Alt+Espace…"), self.curseur_raccourci)
+        b = m.addAction(tr_("🖱️ Ouvrir la roue avec les deux boutons de la souris"))
+        b.setCheckable(True)
+        b.setChecked(bool(self.cfg.get("roue_deux_boutons")) and bool(self.__dict__.get("_accord")))
+        b.toggled.connect(self.roue_deux_boutons)
+
+    def mode_curseur_menu(self):
+        if not curseur_viki:
+            return
+        m = QMenu()
+        self.remplir_menu_curseur(m)
+        m.exec(QCursor.pos())
+
+    def roue_deux_boutons(self, on=True, au_demarrage=False):
+        """Gauche + droit en même temps, n'importe où : la roue s'ouvre."""
+        import souris_globale as SG
+        a = self.__dict__.get("_accord")
+        if not on:
+            if a is not None:
+                a.stop = True
+                self._accord = None
+            self.cfg["roue_deux_boutons"] = False
+            save_config(self.cfg)
+            return
+        self.cfg["roue_deux_boutons"] = True
+        save_config(self.cfg)
+        if a is not None:
+            return
+        ok, raison = SG.accessible()
+        try:
+            dg = SG.diagnostic()
+            log_info(f"deux boutons : souris {dg['souris']} — lisibles {dg['lisibles']} — groupes {dg['groupes_session']}")
+        except Exception:
+            dg = {}
+        if ok:
+            self._accord = SG.Accord(lambda: self.bridge.bg_done.emit(lambda _x: self.roue_curseur(), None)).demarrer()
+            if not au_demarrage:
+                self.say("C'est prêt : clique avec les deux boutons de la souris en même temps, et ma roue s'ouvre ! 🎡")
+            return
+        if au_demarrage:
+            return
+        if raison != "permission":
+            return self.say("Je ne trouve pas de souris à écouter, désolée.")
+        if dg.get("reconnexion"):
+            return self.say("Ton compte est bien dans le groupe « input », mais il faut te déconnecter puis te "
+                            "reconnecter (ou redémarrer) pour que ça marche. Ensuite, réactive l'option !")
+        cmd = ('echo "Viki : pour voir le clic des deux boutons de la souris partout, ton compte doit être dans le '
+               'groupe input."; sudo usermod -aG input "$USER" && echo && echo "C\'est fait ! Déconnecte-toi puis '
+               'reconnecte-toi (ou redémarre) pour que ça marche."; echo; read -p "Entrée pour fermer…"')
+        self.ask_yes("Pour voir le clic des deux boutons partout (même sous Wayland), il faut ajouter ton compte au "
+                     "groupe « input » : je lis seulement les boutons de la souris, jamais le clavier. J'ouvre un terminal avec la "
+                     "commande (ton mot de passe sera demandé) ? Il faudra te reconnecter ensuite. (oui / non)",
+                     lambda: (gestionpc.terminal(cmd) if gestionpc else None))
+
+    def curseur_raccourci(self, silencieux=False):
+        """Inscrit les raccourcis de Viki (dont Meta+Alt+Espace pour la roue) dans les réglages du bureau."""
+        try:
+            import touches as _t
+        except Exception:
+            return False
+        if not _t.peut_installer():
+            if not silencieux:
+                self.show_shortcut_help()
+            return False
+        ok, _b = _t.installer()
+        if not silencieux:
+            self.say("C'est fait : Meta+Alt+Espace ouvre ma roue autour de ta souris ! 🎡" if ok else
+                     "Je n'ai pas réussi à créer le raccourci, désolée.")
+        return ok
+
+    def _avatar_viki(self):
+        """Le visage du personnage choisi (carré), pour le curseur et la roue."""
+        try:
+            img = QImage(str(Path(self.char_dir) / self.char.get("image", "character.png")))
+            if img.isNull():
+                return None
+            yeux = self.char.get("eyes") or []
+            if len(yeux) >= 2:
+                (a, b) = yeux[0], yeux[1]
+                cx, cy = (a["x"] + b["x"]) / 2, (a["y"] + b["y"]) / 2
+                d = max(24.0, abs(b["x"] - a["x"]))
+                cote = d * 3.3
+                x0, y0 = cx - cote / 2, cy - cote * 0.46
+            else:                                       # pas d'yeux connus : le haut de l'image
+                cote = min(img.width(), img.height() * 0.32)
+                x0, y0 = (img.width() - cote) / 2, img.height() * 0.02
+            out = img.copy(int(x0), int(y0), int(cote), int(cote))
+            return out.scaled(128, 128, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        except Exception:
+            log_error("visage pour le curseur")
+            return None
+
+    def curseur_activer(self, demander=True):
+        def go():
+            av = self._avatar_viki()
+
+            def work():
+                return curseur_viki.activer(av)
+
+            def done(r):
+                try:
+                    log_info(f"curseur : {curseur_viki._dernier_message.get('txt', '')} — thème lu ensuite : "
+                             f"{curseur_viki.actuel()} — bureau {curseur_viki.bureau()}")
+                except Exception:
+                    pass
+                if isinstance(r, Exception) or not r[0]:
+                    detail = str(r)[:120] if isinstance(r, Exception) else (r[1] or "")
+                    log_error("curseur : " + detail) if detail else None
+                    return self.say("Je n'ai pas réussi à changer le curseur sur ce bureau, désolée."
+                                    + (f" ({detail[:100]})" if detail else ""))
+                if not demander:
+                    return
+                self.curseur_raccourci(silencieux=True)          # la roue tout de suite à portée de main
+                self.say("Et voilà, ton curseur est le mien ! 💖 (Certaines applis le prennent après un redémarrage.) "
+                         "Meta+Alt+Espace ouvre ma roue autour de lui.")
+            self._bg(work, done)
+        if not demander:
+            return go()
+        self.ask_yes("Je remplace ton pointeur de souris par le mien (rose, avec mon visage à côté) ? Tu pourras "
+                     "remettre l'ancien quand tu veux. (oui / non)", go)
+
+    def curseur_remettre(self):
+        ok = curseur_viki.remettre()
+        self.say("Ton curseur d'avant est revenu." if ok else "Je n'ai pas réussi à remettre ton curseur, désolée.")
+
+    def curseur_etoile(self, on):
+        self.cfg["curseur_etoile"] = bool(on)
+        save_config(self.cfg)
+        e = self.__dict__.get("_etoile")
+        if on and e is None and curseur_viki:
+            self._etoile = curseur_viki.Etoile(self._souris)
+        elif not on and e is not None:
+            e.t.stop()
+            e.close()
+            self._etoile = None
+
+    def roue_curseur(self):
+        if not curseur_viki:
+            return
+        pt = self._souris()
+        r = self.__dict__.get("_roue")
+        if r is not None:
+            try:
+                r.close()
+            except RuntimeError:
+                pass
+        self._roue = curseur_viki.Roue(pt)
+        self._roue.choisi.connect(lambda a, pt=pt: QTimer.singleShot(250, lambda: self._roue_action(a, pt)))
+        self._roue.show()
+        self._roue.activateWindow()
+
+    def _roue_action(self, a, pt):
+        if a == "montre":
+            return self.guide_demander()
+        if a == "ecrire":
+            return self.open_input()
+        if a == "zone":
+            return self.translate_zone()
+        if a == "quoi":
+            return self.guide_ecran("C'est quoi, là où je montre avec la souris ?", point=pt)
+        tmp = os.path.join(str(self.tmpdir), "roue_ecran.png")
+
+        def work():
+            p = pratique.screenshot(tmp) if pratique else ""
+            if not p:
+                QApplication.primaryScreen().grabWindow(0).save(tmp)
+                p = tmp
+            img = QImage(p)
+            if img.isNull():
+                raise RuntimeError("capture vide")
+            x, y = self._point_capture(img, pt)
+            if a == "couleur":
+                c = img.pixelColor(int(min(max(0, x), img.width() - 1)), int(min(max(0, y), img.height() - 1)))
+                return c.name()
+            sc = img.width() / max(1, QApplication.primaryScreen().virtualGeometry().width())
+            w, h = int(520 * sc), int(130 * sc)
+            crop = img.copy(int(x - w / 2), int(y - h / 2), w, h)
+            cp = tmp + ".zone.png"
+            crop.scaled(crop.width() * 2, crop.height() * 2, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation).save(cp)
+            lignes = guide.lignes_ocr(cp, (self.cfg.get("langue", "fr") or "fr")[:2]) if guide else []
+            for f in (p, cp):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+            lignes.sort(key=lambda d: (d["box"][1] // 14, d["box"][0]))
+            return "\n".join(d["texte"] for d in lignes)
+
+        def done(res):
+            if isinstance(res, Exception):
+                return self.say("Je n'ai pas réussi à regarder là : " + str(res)[:80])
+            if a == "couleur":
+                QApplication.clipboard().setText(res)
+                return self.say(f"C'est la couleur {res} — je te l'ai copiée ! 🎨")
+            if not res.strip():
+                return self.say("Je ne lis pas de texte à cet endroit." +
+                                ("" if guide and guide.tesseract_ok() else " (Il me faut Tesseract pour lire l'écran.)"))
+            if a == "copier":
+                QApplication.clipboard().setText(res)
+                return self.say("Copié : « " + res[:120] + ("…" if len(res) > 120 else "") + " »")
+            self.clip_action("traduire", text=res)
+        self._bg(work, done)
+
+    # ---------- 🔕 ce qu'elle a le droit de te dire d'elle-même
+    def muet(self, cle):
+        return cle in (self.cfg.get("muets") or [])
+
+    def auto(self, cle):
+        """Avant un message spontané : True si elle peut le dire (et retient lequel, pour « ne me dis plus ça »)."""
+        if self.muet(cle):
+            return False
+        self._auto_attente = (cle, time.monotonic())      # retenu seulement si elle parle juste après
+        return True
+
+    def muter_dernier(self):
+        d = self.__dict__.get("_dernier_auto")
+        if not d or time.monotonic() - d[1] > 20 * 60:
+            self.fenetre_muets()
+            return True
+        cle = d[0]
+        m = self.cfg.setdefault("muets", [])
+        if cle not in m:
+            m.append(cle)
+        save_config(self.cfg)
+        nom = dict(MUETS_TYPES).get(cle, cle)
+        self.say(f"D'accord, je ne te dirai plus ça ({nom}). Tu peux changer d'avis dans « 🔕 Ce qu'elle me dit ».")
+        return True
+
+    def fenetre_muets(self):
+        from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QVBoxLayout
+        tr_ = (lambda t: i18n.tr(t)) if i18n else (lambda t: t)
+        dlg = QDialog(None)
+        dlg.setWindowTitle(tr_("🔕 Ce qu'elle me dit"))
+        v = QVBoxLayout(dlg)
+        lab = QLabel(tr_("Coche ce qu'elle peut te dire d'elle-même. Les réponses à tes demandes et tes rappels, "
+                         "elle te les dit toujours."))
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        cases = []
+        for cle, nom in MUETS_TYPES:
+            c = QCheckBox(tr_(nom))
+            c.setChecked(not self.muet(cle))
+            v.addWidget(c)
+            cases.append((cle, c))
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        v.addWidget(bb)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.cfg["muets"] = [cle for cle, c in cases if not c.isChecked()]
+            save_config(self.cfg)
+            self.say("C'est noté !")
+
+    # ---------- 🎯 concentrée sur ta demande, et le fil de ce que tu fais
+    def concentree(self):
+        """Une demande est en cours (ou vient d'avoir sa réponse) : elle ne parle de rien d'autre."""
+        return time.monotonic() < self.__dict__.get("_focus_until", 0.0)
+
+    def apres_focus(self, fn, max_attente=300):
+        """Lance fn quand elle n'est plus concentrée (au plus tard après max_attente secondes)."""
+        t0 = time.monotonic()
+
+        def essai():
+            if self.concentree() and time.monotonic() - t0 < max_attente:
+                return QTimer.singleShot(4000, essai)
+            fn()
+        essai()
+
+    def contexte_suivi(self, minutes=30):
+        """Le fil récent : tes demandes et ses réponses, et ce que tu fais sur le PC en ce moment."""
+        out = []
+        cut = time.time() - minutes * 60
+        sv = [x for x in self.__dict__.get("_suivi", []) if x[0] >= cut][:-1]
+        if sv:
+            out.append("Vos derniers échanges (du plus ancien au plus récent) :\n" + "\n".join(
+                f"- {datetime.datetime.fromtimestamp(t).strftime('%H:%M')} il a demandé « {d} »"
+                + (f" → Viki : « {r[:110]} »" if r else "") for t, d, r in sv[-6:]))
+        B = getattr(self, "brain", None)
+        if B and B.present():
+            if B.app or B.title:
+                out.append(f"Fenêtre active : {B.app} — « {(B.title or '')[:90]} »"
+                           + (f" ({cerveau.CAT_TXT.get(B.cat, '')})" if B.cat else ""))
+            r = B.recent_text(30)
+            if r:
+                out.append("Ce qu'il a fait sur le PC ces 30 dernières minutes :\n" + r)
+        g = self.__dict__.get("_guide") or {}
+        if g.get("but"):
+            out.append(f"Un guide à l'écran est en cours : « {g['but']} ».")
+        return "\n".join(out)
+
+    # ---------- 📅 échéances, bilan du soir, mails importants
+    def echeance_noter(self, quoi, d):
+        rs = assistant_jour.rappels_echeance(quoi, d)
+        if not rs:
+            return self.say("Cette date est déjà passée…")
+        for t, txt in rs:
+            self.cfg.setdefault("rappels", []).append({"t": t, "txt": txt})
+        save_config(self.cfg)
+        self._rebuild_menus()
+        jour = d.strftime("%d/%m")
+        self.say(f"C'est noté pour le {jour} : {quoi}. Je te préviens {len(rs)} fois avant, promis !")
+        return True
+
+    def bilan_jour(self, question=False):
+        """Le bilan de ta journée (temps passé, ce qu'on a fait, demain) ; gardé 30 jours."""
+        B = getattr(self, "brain", None)
+        lignes = []
+        if B:
+            t = B.day_text()
+            if t:
+                lignes.append(t)
+        demain = datetime.date.today() + datetime.timedelta(days=1)
+        rs = [r for r in self.cfg.get("rappels", []) if datetime.date.fromtimestamp(r["t"]) == demain]
+        if rs:
+            lignes.append("📅 Demain : " + " · ".join(f"{datetime.datetime.fromtimestamp(r['t']).strftime('%Hh%M')} "
+                                                       f"{r['txt']}" for r in sorted(rs, key=lambda r: r["t"])[:4]))
+        texte = "\n".join(lignes) or "Journée tranquille : rien de spécial à noter."
+        bil = self.cfg.setdefault("bilans", {})
+        bil[datetime.date.today().isoformat()] = texte
+        for k in sorted(bil)[:-30]:
+            bil.pop(k, None)
+        save_config(self.cfg)
+        court = texte.split("\n")[0].replace("⏱️ ", "")
+        if question:
+            return court
+        self._show_text("🌙 " + (i18n.tr("Ma journée") if i18n else "Ma journée"), texte, "")
+        self.say("Voilà ta journée : " + court[:200])
+        return True
+
+    def _mails_tries(self, new):
+        """Les mails importants d'abord, avec la raison."""
+        if not assistant_jour:
+            return new, None
+        notes = [(assistant_jour.importance(m), m) for m in new]
+        notes.sort(key=lambda x: -x[0][0])
+        top = notes[0] if notes and notes[0][0][0] >= 2 else None
+        return [m for _, m in notes], (top[1], top[0][1]) if top else None
+
+    # ---------- 📘 tutoriels gardés
+    def tuto_garder(self, but, etapes):
+        nom = re.sub(r"^(?:montre[- ]moi |guide[- ]moi |comment )", "", but.strip(), flags=re.I)[:60]
+        self.cfg.setdefault("tutos", {})[nom] = {"but": but, "etapes": etapes[-12:]}
+        save_config(self.cfg)
+        self.say(f"C'est gardé ! Dis « refais le tuto {nom} » quand tu veux.")
+
+    def tuto_rejouer(self, nom):
+        tutos = self.cfg.get("tutos") or {}
+        if not tutos:
+            self.say("Tu n'as encore gardé aucun tuto. Après un guide en plusieurs étapes, je te propose de le garder.")
+            return True
+        cle = max(tutos, key=lambda k: difflib.SequenceMatcher(None, _sans_accents(k.lower()), _sans_accents(nom.lower())).ratio())
+        if nom and difflib.SequenceMatcher(None, _sans_accents(cle.lower()), _sans_accents(nom.lower())).ratio() < 0.35:
+            self._drop_menu("📘 " + (i18n.tr("Mes tutos") if i18n else "Mes tutos"),
+                            [("📘 " + k, lambda k=k: self.tuto_rejouer(k)) for k in sorted(tutos)])
+            return True
+        t = tutos[cle]
+        return bool(self.guide_ecran(t["but"], modele=t.get("etapes") or []))
+
+    # ---------- 🪟 ranger les fenêtres
+    def ranger_fenetres(self):
+        ecran = QApplication.primaryScreen().availableGeometry()
+        tool = "kdotool" if shutil.which("kdotool") and os.environ.get("WAYLAND_DISPLAY") else \
+            "wmctrl" if shutil.which("wmctrl") else "kdotool" if shutil.which("kdotool") else ""
+        if not tool:
+            self.say("Pour ranger tes fenêtres, il me faut « kdotool » (KDE Wayland) ou « wmctrl » (X11).")
+            return True
+
+        def work():
+            ids = []
+            if tool == "wmctrl":
+                d = subprocess.run(["wmctrl", "-d"], capture_output=True, text=True, timeout=5).stdout
+                cur = next((l.split()[0] for l in d.splitlines() if " * " in l), "0")
+                for l in subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True, timeout=5).stdout.splitlines():
+                    c = l.split(None, 4)
+                    if len(c) >= 3 and c[1] == cur and not re.search(r"plasmashell|viki|compagnon|desktop|panel|dock",
+                                                                       c[2], re.I):
+                        ids.append(c[0])
+            else:
+                cur = subprocess.run(["kdotool", "get_desktop"], capture_output=True, text=True, timeout=5).stdout.strip()
+                for w in subprocess.run(["kdotool", "search", "--name", "."], capture_output=True, text=True,
+                                        timeout=5).stdout.split():
+                    cl = subprocess.run(["kdotool", "getwindowclassname", w], capture_output=True, text=True,
+                                        timeout=3).stdout.strip()
+                    if re.search(r"plasmashell|viki|compagnon|krunner|xwaylandvideobridge|^$", cl, re.I):
+                        continue
+                    if cur:
+                        dw = subprocess.run(["kdotool", "get_desktop_for_window", w], capture_output=True, text=True,
+                                            timeout=3).stdout.strip()
+                        if dw and dw != cur and dw != "-1":
+                            continue
+                    ids.append(w)
+            ids = ids[:9]
+            places = assistant_jour.grille(len(ids), ecran.x(), ecran.y(), ecran.width(), ecran.height())
+            for w, (x, y, ww, hh) in zip(ids, places):
+                if tool == "wmctrl":
+                    subprocess.run(["wmctrl", "-i", "-r", w, "-b", "remove,maximized_vert,maximized_horz"], timeout=3)
+                    subprocess.run(["wmctrl", "-i", "-r", w, "-e", f"0,{x},{y},{ww},{hh}"], timeout=3)
+                else:
+                    subprocess.run(["kdotool", "windowsize", w, str(ww), str(hh)], timeout=3)
+                    subprocess.run(["kdotool", "windowmove", w, str(x), str(y)], timeout=3)
+            return len(ids)
+
+        def done(n):
+            if isinstance(n, Exception):
+                return self.say("Je n'ai pas réussi à ranger tes fenêtres : " + str(n)[:80])
+            self.say(f"Et voilà, {n} fenêtres côte à côte !" if n else "Je ne vois aucune fenêtre à ranger.")
+        self._bg(work, done)
+        return True
+
+    # ---------- 📥 téléchargements surveillés
+    def _dl_veille(self):
+        if not self.cfg.get("telechargements_veille", True) or GUEST:
+            return
+        d = outils.user_dir("DOWNLOAD") if outils else (extras.downloads_dir() if extras else None)
+        if not d or not Path(d).is_dir():
+            return
+        from PyQt6.QtCore import QFileSystemWatcher
+        self._dl_dir = Path(d)
+        self._dl_vus = {p.name for p in self._dl_dir.iterdir()}
+        self._dl_w = QFileSystemWatcher([str(d)], self)
+        self._dl_w.directoryChanged.connect(lambda _p: QTimer.singleShot(2500, self._dl_nouveau))
+
+    def _dl_nouveau(self):
+        try:
+            noms = {p.name for p in self._dl_dir.iterdir()}
+        except OSError:
+            return
+        nouveaux = [n for n in noms - self._dl_vus if not re.search(r"\.(?:part|crdownload|tmp|download|opdownload)$|^\.",
+                                                                    n, re.I)]
+        self._dl_vus = noms
+        if not nouveaux or self.fs_hidden or self.is_muted():
+            return
+        p = self._dl_dir / sorted(nouveaux)[-1]
+        if not p.is_file():
+            return
+        try:
+            t1 = p.stat().st_size
+        except OSError:
+            return
+        QTimer.singleShot(1500, lambda: self._dl_proposer(p, t1))
+
+    def _dl_proposer(self, p, t1):
+        if self.muet("telechargements"):
+            return
+        if self.concentree():
+            return self.apres_focus(lambda: self._dl_proposer(p, t1))
+        try:
+            if p.stat().st_size != t1:                     # encore en train d'arriver
+                return QTimer.singleShot(2000, lambda: self._dl_proposer(p, p.stat().st_size))
+        except OSError:
+            return
+        ext = p.suffix.lower()
+        self.auto("telechargements")
+        nom = p.name if len(p.name) < 50 else p.name[:47] + "…"
+        a = assistant_jour.analyse_fichier(p) if assistant_jour and (ext in assistant_jour.EXECUTABLES) else None
+        if a is not None:
+            self.ask_yes(f"Tu viens de télécharger « {nom} », un programme. Je vérifie s'il est sûr avant que tu le "
+                         "lances ? (oui / non)", lambda: self.verifier_fichier(str(p)))
+        elif ext in (".pdf", ".docx", ".odt", ".epub", ".txt", ".md") and (self.ollama_ok or self.ia_remote()):
+            self.ask_yes(f"« {nom} » vient d'arriver. Je te le résume ? (oui / non)",
+                         lambda: self.fichier_action("resumer", [str(p)]))
+        elif ext in (".zip", ".tar", ".gz", ".xz", ".zst", ".7z", ".rar", ".tgz"):
+            self.ask_yes(f"« {nom} » vient d'arriver. Je te montre ce qu'il y a dedans ? (oui / non)",
+                         lambda: self.archive_contenu(str(p)))
+
+    def archive_contenu(self, path):
+        def work():
+            p = Path(path)
+            if zipfile.is_zipfile(p):
+                with zipfile.ZipFile(p) as z:
+                    return [i.filename for i in z.infolist()][:400]
+            import tarfile
+            try:
+                with tarfile.open(p) as t:
+                    return t.getnames()[:400]
+            except Exception:
+                pass
+            if shutil.which("7z"):
+                r = subprocess.run(["7z", "l", "-ba", str(p)], capture_output=True, text=True, timeout=60)
+                return [l[53:] for l in r.stdout.splitlines() if len(l) > 53][:400]
+            if shutil.which("bsdtar"):
+                r = subprocess.run(["bsdtar", "-tf", str(p)], capture_output=True, text=True, timeout=60)
+                return r.stdout.splitlines()[:400]
+            return None
+
+        def done(noms):
+            if isinstance(noms, Exception) or noms is None:
+                return self.say("Je n'arrive pas à ouvrir cette archive.")
+            alerte = [n for n in noms if assistant_jour and Path(n).suffix.lower() in assistant_jour.EXECUTABLES]
+            self._show_text("🗜️ " + Path(path).name, "\n".join(noms), f"{len(noms)} éléments")
+            self.say(f"Il y a {len(noms)} éléments dedans." + (f" Dont {len(alerte)} programme(s) : vérifie leur source "
+                                                                  "avant de les lancer." if alerte else ""))
+        self._bg(work, done)
+
+    # ---------- 🙈 partage d'écran : elle se cache
+    def _partage_loop(self):
+        pw = shutil.which("pw-cli")
+        if not pw:
+            return
+        prev = False
+        while True:
+            time.sleep(15)
+            if not self.cfg.get("partage_cacher", True):
+                continue
+            try:
+                out = subprocess.run([pw, "ls", "Node"], capture_output=True, text=True, timeout=5).stdout
+            except Exception:
+                continue
+            on = False
+            for bloc in out.split("\tid ")[1:]:
+                if re.search(r'media\.class = "Video/Source"', bloc) and \
+                        not re.search(r'v4l2|libcamera|camera|webcam|uvc', bloc, re.I):
+                    on = True
+                    break
+            if on != prev:
+                prev = on
+                self.bridge.bg_done.emit(self._on_partage, on)
+
+    def _on_partage(self, on):
+        self._partage = on
+        if on and not self.fs_hidden:
+            self._on_fullscreen(True)
+        elif not on and self.fs_hidden:
+            self._on_fullscreen(False)
+
+    # ---------- 🔒 secrets copiés, 🛡️ fichier sûr ?, permissions
+    def _secret_copie(self, txt):
+        if not self.cfg.get("clip_secret", True) or not assistant_jour or not assistant_jour.ressemble_secret(txt):
+            return False
+        cb = QApplication.clipboard()
+
+        def vider():
+            try:
+                if cb.text() == txt:
+                    cb.clear()
+            except Exception:
+                pass
+        QTimer.singleShot(60_000, vider)
+        j = datetime.date.today().isoformat()
+        if self.cfg.get("clip_secret_dit") != j and not self.fs_hidden:
+            self.cfg["clip_secret_dit"] = j
+            self.say("Ça ressemble à un mot de passe ou une clé : je vide ton presse-papiers dans 1 minute. 🔒")
+        return True
+
+    def verifier_fichier(self, path):
+        if not assistant_jour:
+            return
+        nom = Path(path).name
+        self.say(f"Je regarde « {nom} » sans l'ouvrir…")
+        self.react = ("regarde", time.monotonic())
+        ia = self.ollama_ok or self.ia_remote()
+
+        def work():
+            a = assistant_jour.analyse_fichier(path)
+            avis = ""
+            if ia and a["texte"]:
+                try:
+                    avis = self._llm([{"role": "user", "content":
+                                       f"Voici le contenu du fichier « {nom} » téléchargé par l'utilisateur :\n\n"
+                                       f"{a['texte'][:9000]}\n\nCe fichier est-il dangereux ? Explique simplement ce qu'il "
+                                       "ferait si on le lançait, et dis clairement si tu conseilles de le lancer. Court."}],
+                                     timeout=180)
+                except Exception:
+                    avis = ""
+            return a, avis
+
+        def done(res):
+            if isinstance(res, Exception):
+                return self.say("Je n'ai pas réussi à analyser ce fichier.")
+            a, avis = res
+            lg = self.cfg.get("langue", "fr") or "fr"
+            trad = (lambda x: i18n.tr_to(x, lg)) if i18n and not lg.startswith("fr") else None
+            niv, phrase = assistant_jour.verdict(a, trad)          # chaque alerte dans ta langue
+            if trad:
+                a = dict(a, alertes=[trad(x) for x in a["alertes"]])
+            lignes = [f"📄 {a['nom']} — {a['type'] or '?'} — {a['taille'] // 1024} Ko",
+                      ("🔴 " if niv == 2 else "🟠 " if niv == 1 else "🟢 ") + (i18n.tr_to(phrase, lg) if trad else phrase)]
+            if a["alertes"]:
+                lignes.append("\n" + "\n".join("• " + x for x in a["alertes"]))
+            if a["clamav"]:
+                lignes.append("\n🦠 ClamAV : " + a["clamav"])
+            elif not shutil.which("clamscan"):
+                lignes.append("\n" + (i18n.tr_to("(Pour une vérification antivirus en plus, installe ClamAV.)", lg)
+                                       if trad else "(Pour une vérification antivirus en plus, installe ClamAV.)"))
+            if avis:
+                lignes.append("\n💡 " + avis)
+            self._show_text("🛡️ " + nom, "\n".join(lignes), "Je ne l'ai pas lancé, seulement lu.")
+            if niv == 2:
+                self.surprise_until = time.monotonic() + 1
+            self.say(phrase)
+        self._bg(work, done)
+
+    def bilan_permissions(self):
+        self.say("Je regarde qui a accès à ton micro, ta caméra et tes fichiers…")
+
+        def work():
+            out = []
+            micro = []
+            if shutil.which("pactl"):
+                r = subprocess.run(["pactl", "list", "source-outputs"], capture_output=True, text=True, timeout=8).stdout
+                micro = sorted(set(re.findall(r'application\.name = "([^"]+)"', r)))
+            out.append("🎙️ Micro utilisé en ce moment par : " + (", ".join(micro) if micro else "personne"))
+            cam = set()
+            for pid in os.listdir("/proc"):
+                if not pid.isdigit():
+                    continue
+                try:
+                    for fd in os.listdir(f"/proc/{pid}/fd"):
+                        if os.readlink(f"/proc/{pid}/fd/{fd}").startswith("/dev/video"):
+                            cam.add(Path(f"/proc/{pid}/comm").read_text().strip())
+                            break
+                except OSError:
+                    continue
+            out.append("📷 Caméra utilisée en ce moment par : " + (", ".join(sorted(cam)) if cam else "personne"))
+            if shutil.which("flatpak"):
+                apps = subprocess.run(["flatpak", "list", "--app", "--columns=application"], capture_output=True,
+                                      text=True, timeout=20).stdout.split()
+                larges = []
+                for a in apps[:80]:
+                    r = subprocess.run(["flatpak", "info", "--show-permissions", a], capture_output=True, text=True,
+                                       timeout=10).stdout
+                    droits = []
+                    if re.search(r"filesystems=.*\bhost\b", r):
+                        droits.append("tous tes fichiers")
+                    elif re.search(r"filesystems=.*\bhome\b", r):
+                        droits.append("ton dossier personnel")
+                    if re.search(r"devices=.*\ball\b", r):
+                        droits.append("caméra et appareils")
+                    if re.search(r"sockets=.*pulseaudio", r) and not re.search(r"devices=.*\ball\b", r):
+                        droits.append("le son (et donc le micro)")
+                    if droits:
+                        larges.append(f"• {a} : " + ", ".join(droits))
+                out.append("\n📦 Applis Flatpak avec des accès larges (" + str(len(larges)) + ") :\n" +
+                           ("\n".join(larges) if larges else "aucune") +
+                           "\n\nTu peux réduire ces accès avec l'appli « Flatseal ».")
+            return "\n".join(out)
+
+        def done(t):
+            if isinstance(t, Exception):
+                return self.say("Je n'ai pas réussi à tout vérifier, désolée.")
+            self._show_text("🔐 " + (i18n.tr("Qui a accès à quoi") if i18n else "Qui a accès à quoi"), t, "")
+            self.say(t.split("\n")[0])
+        self._bg(work, done)
+
+    # ---------- 🎓 visite guidée, révision, terminal expliqué
+    APPS_VISITE = ("gimp", "blender", "inkscape", "krita", "libreoffice", "soffice", "kdenlive", "obs", "darktable",
+                   "freecad", "audacity", "shotcut", "scribus", "digikam", "godot", "unity", "davinci", "resolve",
+                   "kicad", "musescore", "lmms", "ardour", "openshot", "rawtherapee", "handbrake")
+
+    def visite_guidee(self):
+        return self.guide_ecran("Fais-moi une visite guidée de l'application ouverte : montre ses zones principales "
+                                "une par une (menus, outils, panneaux) et à quoi elles servent.")
+
+    def _appli_nouvelle(self, cls):
+        c = (cls or "").lower()
+        app = next((a for a in self.APPS_VISITE if a in c), None)
+        if not app or not guide or self.concentree() or not self.auto("visite"):
+            return
+        vues = self.cfg.setdefault("apps_vues", [])
+        if app in vues:
+            return
+        vues.append(app)
+        save_config(self.cfg)
+        if self.fs_hidden or self.bubble_text:
+            return
+        self.ask_yes(f"C'est la première fois que je te vois sur {app.capitalize()} ! Tu veux une petite visite guidée ? "
+                     "(oui / non)", self.visite_guidee)
+
+    def reviser(self, sujet, mode="quiz"):
+        if not (self.ollama_ok or self.ia_remote()):
+            return self.say_from("sans_ia")
+        ex = memoire_fichiers.chercher(sujet, 6) if memoire_fichiers else []
+        src = "\n\n".join(f"[{Path(m['f']).name}] {m['t']}" for _, m in ex)
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        langue = guide.LANGUES.get(lang, "français") if guide else "français"
+        base = (f"D'après ces extraits des cours de l'utilisateur :\n{src}\n\n" if src else "") + f"Sujet : {sujet}\n"
+        self.say("Je prépare ça" + (" à partir de tes fichiers…" if src else "…"))
+        if mode == "fiche":
+            prompt = base + (f"Fais une fiche de révision claire en {langue} : l'essentiel en points, les définitions, "
+                             "les pièges à éviter. Markdown simple.")
+            return self.ask_ai(prompt, lambda r: (self._show_text("📝 " + sujet[:40], r, ""), self.say("Ta fiche est prête !"))
+                               if r else self.say("Je n'ai pas réussi à faire la fiche."), timeout=240)
+        prompt = base + (f"Fais un quiz de 6 questions à choix multiples en {langue}. Réponds UNIQUEMENT en JSON : "
+                         '{"questions": [{"q": "…", "choix": ["…", "…", "…", "…"], "bonne": 0, "explication": "…"}]}')
+
+        def work():
+            txt = self._llm([{"role": "user", "content": prompt}], timeout=240, json_mode=True)
+            m = re.search(r"\{.*\}", txt or "", re.S)
+            d = json.loads(m.group(0)) if m else {}
+            qs = [q for q in d.get("questions", []) if isinstance(q, dict) and q.get("q") and
+                  isinstance(q.get("choix"), list) and len(q["choix"]) >= 2]
+            return qs
+
+        def done(qs):
+            if isinstance(qs, Exception) or not qs:
+                return self.say("Je n'ai pas réussi à faire le quiz, désolée.")
+            from quiz_fenetre import QuizFenetre
+            self._quiz = QuizFenetre(self, sujet, qs)
+            self._quiz.show()
+            self.say(f"C'est parti : {len(qs)} question{'s' if len(qs) > 1 else ''} sur {sujet} !")
+        self._bg(work, done)
+        return True
+
+    def terminal_expliquer(self, cmd):
+        cmd = (cmd or "").strip()
+        if not cmd:
+            return
+        dg = assistant_jour.dangers(cmd) if assistant_jour else []
+        lg = self.cfg.get("langue", "fr")
+        if dg and i18n and lg and not lg.startswith("fr"):
+            dg = [i18n.tr_to(x, lg) for x in dg]
+        if dg:
+            self.surprise_until = time.monotonic() + 1.5
+            self._spawn("exclam", 1, 0.3)
+            self.say("⚠️ Attention, cette commande " + dg[0] + " !")
+        if not (self.ollama_ok or self.ia_remote()):
+            if not dg:
+                self.say("Je n'ai pas d'IA pour l'expliquer, mais je n'y vois rien de dangereux.")
+            return
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        langue = guide.LANGUES.get(lang, "français") if guide else "français"
+        prompt = (f"Explique en {langue}, simplement et brièvement, ce que fait cette commande Linux, morceau par morceau, "
+                  f"et si elle est risquée :\n\n{cmd}")
+        self.ask_ai(prompt, lambda r: (self._show_text("💻 " + cmd[:50], r, ""), None if dg else
+                                       self.say(r[:220] + ("…" if len(r) > 220 else ""))) if r else None, timeout=120)
+
+    def terminal_installer(self):
+        import shell_viki
+        if shell_viki.installe():
+            return self.ask_yes("Le raccourci Alt+E est déjà dans ton terminal. Je l'enlève ? (oui / non)",
+                                lambda: (shell_viki.retirer(), self.say("C'est enlevé.")))
+
+        def go():
+            faits = shell_viki.installer()
+            self.say("C'est fait ! Dans un NOUVEAU terminal, tape une commande puis Alt+E : je te l'explique avant que "
+                     "tu appuies sur Entrée. (" + ", ".join(faits) + ")" if faits else "Je n'ai trouvé ni bash, ni zsh, ni fish.")
+        self.ask_yes("J'ajoute le raccourci Alt+E dans ton terminal (bash, zsh, fish) ? J'ajoute juste quelques lignes "
+                     "marquées « Viki » à ta config, que je peux retirer. (oui / non)", go)
+
+    # ---------- 💜 humeur du jour, envies, vrais événements
+    def humeur(self):
+        j = datetime.date.today().isoformat()
+        h = self.cfg.get("humeur") or {}
+        if h.get("j") == j or not assistant_jour:
+            return h.get("h", "calme")
+        hier = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        msgs = (self.cfg.get("msgs_jour") or {}).get(hier, 0)
+        tard = bool((self.cfg.get("tard_jour") or {}).get(hier))
+        hm = assistant_jour.humeur_du_jour(str(self.weather or ""), msgs, tard, graine=hash(j) & 0xffff)
+        self.cfg["humeur"] = {"j": j, "h": hm, "envie": False}
+        save_config(self.cfg)
+        return hm
+
+    def _bugs_tick(self):
+        """🐞 Elle a eu un bug : elle propose (au plus une fois par jour) d'envoyer le rapport au développeur."""
+        if not BUGS_NOUVEAUX or GUEST or self.concentree() or self.fs_hidden or self.bubble_text:
+            return
+        if time.time() - float(self.cfg.get("bugs_propose", 0) or 0) < 20 * 3600 or not self.auto("bugs"):
+            return
+        ou = BUGS_NOUVEAUX[-1][1]
+        BUGS_NOUVEAUX.clear()
+        self.cfg["bugs_propose"] = time.time()
+        save_config(self.cfg)
+        self.ask_yes(f"Oups, j'ai eu un petit bug ({ou}). Tu veux envoyer le rapport à korhyu pour qu'il le corrige ? "
+                     "Rien de personnel dedans, et tu vois tout avant d'envoyer. (oui / non)", self.signaler_bug)
+
+    def _bugs_message_unique(self):
+        """Une seule fois : le petit mot du développeur."""
+        if self.cfg.get("bugs_mot_v1") or GUEST:
+            return
+        if self.concentree() or self.fs_hidden or self.bubble_text:
+            return QTimer.singleShot(60_000, self._bugs_message_unique)
+        self.cfg["bugs_mot_v1"] = True
+        save_config(self.cfg)
+        self.say("Petit mot de korhyu, qui me fabrique : il travaille tout seul, sur un vieux PC premier prix, et ne "
+                 "peut pas tester tous les ordinateurs. Si je bugue chez toi, dis « signale un bug » (ou clique sur "
+                 "🐞) : le rapport est déjà prêt, sans rien de personnel. Ça l'aide énormément ! 💜")
+        QTimer.singleShot(20_000, lambda: self.ask_yes(
+            "Et s'il réunit assez de dons, il pourra s'acheter un vrai PC avec une bonne carte graphique, pour "
+            "m'apprendre à générer des vidéos, traduire le texte dans les vidéos, et d'autres choses qui demandent "
+            "du vrai matériel. Tu veux voir sa page de dons (Ko-fi) ? (oui / non)", lambda: open_link(DON_URL)))
+
+    def _vivante_tick(self):
+        """Toutes les minutes : envie du jour (une fois l'après-midi), première neige."""
+        now = datetime.datetime.now()
+        j = now.date().isoformat()
+        if now.hour >= 23 or now.hour < 4:
+            self.cfg.setdefault("tard_jour", {})[j] = True
+            for k in sorted(self.cfg["tard_jour"])[:-5]:
+                self.cfg["tard_jour"].pop(k, None)
+        if self.fs_hidden or self.bubble_text or not self.cfg.get("chatty", True) or self._brain_quiet() \
+                or not self.auto("envies"):
+            return
+        w = str(self.weather or "").lower()
+        saison = f"{now.year if now.month >= 7 else now.year - 1}"
+        if "neige" in w and self.cfg.get("neige_saison") != saison:
+            self.cfg["neige_saison"] = saison
+            save_config(self.cfg)
+            self._spawn_emoji("❄️", 3)
+            return self.say("Il neige chez toi ! ❄️ La première neige de l'hiver !")
+        h = self.cfg.get("humeur") or {}
+        if assistant_jour and h.get("j") == j and not h.get("envie") and 14 <= now.hour < 18 \
+                and time.monotonic() - self.last_interaction > 20 * 60 and random.random() < 0.05:
+            h["envie"] = True
+            save_config(self.cfg)
+            self.say(random.choice(assistant_jour.ENVIES.get(h.get("h"), ["J'ai envie qu'on fasse un truc ensemble !"])))
+
+    # ---------- 🧰 les outils de son IA : une demande avec tes mots -> la bonne fonction de Viki
+    def _routeur(self, text):
+        acts = raccourcis.actions(self) if raccourcis else []
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        langue = guide.LANGUES.get(lang, "français") if guide else "français"
+        prompt = outils_ia.consigne(text, acts, langue, self.contexte_suivi())
+
+        def work():
+            return outils_ia.lire(self.llm([{"role": "user", "content": prompt}], timeout=60, json_mode=True))
+
+        def done(r):
+            if isinstance(r, Exception) or not r:
+                return self._message_suite(text)
+            try:
+                if not self._outil_ia(r, acts, text):
+                    self._message_suite(text)
+            except Exception:
+                log_error("outils de l'IA")
+                self._message_suite(text)
+        self._bg(work, done)
+
+    def _outil_ia(self, r, acts, text):
+        """Lance l'outil choisi par l'IA. -> False si rien ne colle (on discute alors)."""
+        o, a, dire = r["outil"], r["args"], r["dire"]
+        par_id = {x["id"]: x for x in acts}
+        if o == "rappel":
+            ts = outils_ia.quand(str(a.get("quand", "")))
+            txt = str(a.get("texte") or "").strip()
+            if not ts or not txt or ts < time.time():
+                return False
+            self.cfg.setdefault("rappels", []).append({"t": ts, "txt": txt})
+            save_config(self.cfg)
+            self._rebuild_menus()
+            d = datetime.datetime.fromtimestamp(ts)
+            fr = (self.cfg.get("langue", "fr") or "fr").startswith("fr")
+            jour = "aujourd'hui" if d.date() == datetime.date.today() else \
+                "demain" if d.date() == datetime.date.today() + datetime.timedelta(days=1) else \
+                d.strftime("le %d/%m" if fr else "%d/%m")
+            self.say(f"C'est noté ! Je te rappelle {jour} à {d.strftime('%Hh%M')} : {txt}.")
+            return True
+        if o == "minuteur":
+            try:
+                mn = float(a.get("minutes"))
+            except (TypeError, ValueError):
+                return False
+            if not 0 < mn <= 24 * 60:
+                return False
+            self.add_timer(mn * 60, str(a.get("texte") or ""))
+            return True
+        if o == "musique":
+            cmd = str(a.get("commande") or "").lower()
+            if cmd == "titre":
+                return self.chanson_en_cours()
+            if cmd not in ("play", "pause", "next", "previous"):
+                return False
+            pc = shutil.which("playerctl")
+            if not pc:
+                self.say("Il me manque playerctl pour ça.")
+                return True
+            subprocess.Popen([pc, cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.say_from("commande_ok")
+            return True
+        if o == "ouvrir_appli":
+            nom = str(a.get("nom") or "").strip().lower()
+            return bool(nom) and self._local_command("ouvre " + nom)
+        if o == "ouvrir_site":
+            url = str(a.get("url") or "").strip()
+            if not re.match(r"^https?://[\w.-]+", url) or not re.search(r"https?://|\.\w{2,}|site|page|web|google|youtube",
+                                                                       text, re.I):
+                return False
+            self.ask_yes(f"J'ouvre {url} dans ton navigateur ?", lambda: open_link(url))
+            return True
+        if o == "guide" and guide:
+            return bool(self.guide_ecran(str(a.get("question") or text)))
+        if o == "fichiers" and memoire_fichiers:
+            return self.memoire_demander(str(a.get("question") or text))
+        if o == "trouver_fichier" and memoire_fichiers:
+            return self.memoire_trouver(str(a.get("nom") or text))
+        if o == "note":
+            t = str(a.get("texte") or "").strip()
+            if not t:
+                return False
+            self._notes_cmd("note_add", t)
+            return True
+        if o == "echeance" and assistant_jour:
+            try:
+                d = datetime.date.fromisoformat(str(a.get("date", ""))[:10])
+            except ValueError:
+                return False
+            t = str(a.get("texte") or "").strip()
+            return bool(t) and self.echeance_noter(t, d)
+        if o == "reviser":
+            sj = str(a.get("sujet") or "").strip()
+            return bool(sj) and bool(self.reviser(sj, "fiche" if a.get("mode") == "fiche" else "quiz"))
+        if o == "expliquer_commande":
+            cm = str(a.get("commande") or "").strip()
+            if not cm:
+                return False
+            self.terminal_expliquer(cm)
+            return True
+        if o == "courses":
+            arts = [str(x).strip() for x in (a.get("articles") or []) if str(x).strip()]
+            if not arts:
+                return False
+            self._notes_cmd("courses_add", arts)
+            return True
+        act = par_id.get(o)
+        if act is None:
+            return False
+        fais = act["fn"]
+        phrase = dire or f"{act['ico']} {act['nom']}"
+        if outils_ia.risque(o, a, act["nom"]):
+            self.ask_yes(f"Je vais faire : {act['ico']} {act['nom']}. D'accord ? (oui / non)", fais)
+            return True
+        self.say(phrase)
+        QTimer.singleShot(400, fais)
+        return True
+
+    # ---------- 🖱️ clic droit « Viki » dans les fichiers
+    def clic_fichiers_installer(self):
+        if not clic_fichiers:
+            return
+        if clic_fichiers.installe():
+            return self.ask_yes("« Viki » est déjà dans le clic droit de tes fichiers. Je l'enlève ? (oui / non)",
+                                lambda: (clic_fichiers.retirer(), self.say("C'est enlevé.")))
+
+        def go():
+            faits = clic_fichiers.installer()
+            self.say(("C'est fait ! Fais un clic droit sur un fichier → « Viki » (" + ", ".join(faits) + ").")
+                     if faits else "Je n'ai pas trouvé Dolphin, Nautilus ou Nemo sur ce PC.")
+        self.ask_yes("J'ajoute « Viki » au clic droit de tes fichiers (Dolphin, Nautilus, Nemo) ? Je n'écris que "
+                     "de petits fichiers de menu dans ton dossier personnel. (oui / non)", go)
+
+    def fichier_action(self, act, chemins):
+        chemins = [c for c in chemins if os.path.isfile(c)]
+        if not chemins:
+            return self.say("Je ne trouve pas ce fichier.")
+        p = chemins[0]
+        nom = Path(p).name
+        if act in ("png", "jpg", "webp"):
+            faits = []
+            for c in chemins:
+                img = QImage(c)
+                if img.isNull():
+                    continue
+                dest = Path(c).with_suffix("." + act)
+                n = 2
+                while dest.exists():                          # on n'écrase jamais rien
+                    dest = Path(c).with_name(f"{Path(c).stem}-{n}.{act}")
+                    n += 1
+                if act == "jpg" and img.hasAlphaChannel():
+                    fond = QImage(img.size(), QImage.Format.Format_RGB32)
+                    fond.fill(QColor("white"))
+                    pt = QPainter(fond)
+                    pt.drawImage(0, 0, img)
+                    pt.end()
+                    img = fond
+                if img.save(str(dest), None, 92):
+                    faits.append(dest.name)
+            return self.say(("C'est converti : " + ", ".join(faits[:4]) + (" …" if len(faits) > 4 else "") + " (à côté de "
+                             "l'original).") if faits else "Je n'ai pas réussi à convertir ces images.")
+        if act == "decrire":
+            return self.look_image(p, "decrire")
+        if act == "surete":
+            return self.verifier_fichier(p)
+        if not memoire_fichiers:
+            return
+        texte = memoire_fichiers.lire(p)
+        if not texte.strip():
+            if Path(p).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+                return self.look_image(p, "decrire")
+            return self.say(f"Je n'arrive pas à lire le texte de « {nom} »." +
+                            (" (Pour les PDF, il me faut pdftotext, du paquet poppler.)"
+                             if p.lower().endswith(".pdf") and not shutil.which("pdftotext") else ""))
+        texte = texte[:14000]
+        if not self.ollama_ok:
+            return self.say_from("sans_ia")
+        if act in ("resumer", "traduire"):
+            return self.clip_action(act, text=texte)
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        langue = guide.LANGUES.get(lang, "français") if guide else "français"
+        if act == "demander":
+            q, ok = QInputDialog.getText(None, "💬 " + nom, i18n.tr("Ta question sur ce fichier :") if i18n else
+                                         "Ta question sur ce fichier :")
+            if not ok or not q.strip():
+                return
+            prompt = (f"Voici le fichier « {nom} » :\n\n{texte}\n\nQuestion : {q.strip()}\n"
+                      f"Réponds d'après le fichier, simplement, en {langue}.")
+            titre = "💬 " + nom
+        else:
+            prompt = (f"Voici le fichier « {nom} » :\n\n{texte}\n\nExplique-moi simplement, en {langue}, ce que c'est "
+                      "et ce qu'il contient d'important (pour un code : ce qu'il fait, étape par étape ; pour une "
+                      "config : ce que règlent les lignes importantes). Ne recopie pas de mot de passe.")
+            titre = "💡 " + nom
+        self.say("Je lis « " + nom + " »…")
+        self.react = ("regarde", time.monotonic())
+
+        def done(rep):
+            if not rep:
+                return self.say("Oups, je n'ai pas réussi… (l'IA ne répond pas)")
+            self._show_text(titre, rep, "")
+            self.say(rep[:220] + ("…" if len(rep) > 220 else ""))
+        self.ask_ai(prompt, done, timeout=240)
+
+    # ---------- 📚 la mémoire de tes fichiers
+    def memoire_demander(self, question):
+        if not memoire_fichiers:
+            return False
+        nf, nm, _d = memoire_fichiers.resume()
+        if not nm:
+            self.say("Je n'ai encore lu aucun de tes dossiers. Choisis lesquels dans « 📚 Mémoire de mes fichiers ».")
+            QTimer.singleShot(800, self.memoire_fenetre)
+            return True
+        ex = memoire_fichiers.chercher(question, 6)
+        if not ex:
+            self.say("Je ne trouve rien là-dessus dans tes fichiers, désolée.")
+            return True
+        if not self.ollama_ok:
+            self.say("Voilà ce que j'ai trouvé : " + ", ".join(sorted({Path(m['f']).name for _, m in ex})[:4]))
+            return True
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        prompt = memoire_fichiers.consigne(question, ex, guide.LANGUES.get(lang, "français") if guide else "français")
+        self.say("Je regarde dans tes fichiers…")
+        fichiers = []
+        for _, m in ex:
+            if m["f"] not in fichiers:
+                fichiers.append(m["f"])
+
+        def done(rep):
+            if not rep:
+                return self.say("Je n'ai pas réussi à lire la réponse, désolée.")
+            self.say(rep[:900])
+            self._drop_menu("📚 " + (i18n.tr("Les fichiers utilisés") if i18n else "Les fichiers utilisés"),
+                            [("📄 " + Path(f).name, lambda f=f: open_link(str(f))) for f in fichiers[:5]])
+        self.ask_ai(prompt, done, timeout=180)
+        return True
+
+    def memoire_trouver(self, nom):
+        if not memoire_fichiers:
+            return False
+        res = memoire_fichiers.chercher_fichier(nom)
+        if not res:
+            self.say("Je ne trouve pas de fichier à ce nom dans les dossiers que je connais.")
+            return True
+        self.say(f"J'en ai trouvé {len(res)} :" if len(res) > 1 else "Le voilà :")
+        self._drop_menu("🔎 " + nom[:40], [("📄 " + Path(f).name, lambda f=f: open_link(str(f))) for f in res] +
+                        [("📂 " + (i18n.tr("Ouvrir le dossier") if i18n else "Ouvrir le dossier"),
+                          lambda f=res[0]: open_link(str(Path(f).parent)))])
+        return True
+
+    def memoire_indexer(self, annoncer=False):
+        dossiers = self.cfg.get("memoire_dossiers") or []
+        if not memoire_fichiers or not dossiers:
+            return
+        if annoncer:
+            self.say("Je lis tes dossiers… (ça peut prendre un moment la première fois)")
+
+        def done(r):
+            if annoncer and isinstance(r, tuple):
+                self.say(f"C'est fait ! J'ai lu {r[0]} fichiers. Demande-moi « d'après mes notes… ».")
+            w = self.__dict__.get("memoire_win")
+            if w is not None and w.isVisible():
+                w.rafraichir()
+        self._bg(lambda: memoire_fichiers.indexer(dossiers), done)
+
+    def memoire_fenetre(self):
+        w = self.__dict__.get("memoire_win")
+        if w is None:
+            w = self.memoire_win = memoire_fichiers.Fenetre(self)
+        w.rafraichir()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def chanson_en_cours(self):
+        pc = shutil.which("playerctl")
+        if not pc:
+            self.say("Il me manque playerctl pour savoir ce qui joue.")
+            return True
+        try:
+            t = subprocess.run([pc, "metadata", "--format", "{{title}}|{{artist}}|{{playerName}}"],
+                               capture_output=True, text=True, timeout=3).stdout.strip()
+        except Exception:
+            t = ""
+        if not t or t.startswith("|"):
+            self.say("Je n'entends aucune musique en ce moment.")
+            return True
+        titre, artiste, lecteur = (t.split("|") + ["", "", ""])[:3]
+        self.say(f"C'est « {titre} »" + (f" de {artiste}" if artiste else "") + (f" (sur {lecteur})" if lecteur else "")
+                 + " 🎵")
+        return True
+
+    # ---------- 👉 le guide à l'écran : elle entoure, souligne, montre, et explique (sans jamais cliquer)
+    def guide_demander(self):
+        """Le rond / le menu : ouvre la barre avec « Montre-moi où… » prêt à compléter."""
+        self.open_input()
+        b = self.__dict__.get("input_box")
+        if b is not None:
+            b.edit.setText((i18n.tr("Montre-moi où") if i18n else "Montre-moi où") + " ")
+            b.edit.setFocus()
+            b.edit.end(False)
+
+    def guide_effacer(self):
+        c = self.__dict__.get("_guide_calque")
+        if c is not None:
+            c.effacer()
+
+    def guide_ecran(self, question, suite=False, modele=None, point=None):
+        if not guide or not pratique:
+            return self.say("Il me manque le fichier guide.py pour ça.")
+        etat = self.__dict__.get("_guide") or {}
+        if suite:
+            if not etat.get("but"):
+                return False
+            question = etat["but"]
+        else:
+            etat = self._guide = {"but": question, "faites": [], "modele": list(modele or [])}
+        voit = bool(self.ia_remote() or self.vision_models())
+        if not voit and not guide.tesseract_ok():
+            return self.ask_yes("Pour te montrer des choses sur l'écran, il me faut une IA qui voit les images "
+                                "(qwen3-vl:4b, 3,3 Go, elle reste sur ton PC). Je la télécharge ? (oui / non)",
+                                lambda: self.pull_vision_model("qwen3-vl:4b"))
+        if voit and not self.ia_remote():
+            self.vision_ready()
+        self.guide_effacer()
+        self.say("Je regarde ton écran… (l'image reste sur ton PC)" if not self.ia_remote() else
+                 "Je regarde ton écran…")
+        self.hide_bubble_for_shot = True
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        tmp = os.path.join(str(self.tmpdir), "guide_ecran.png")
+
+        def shoot():
+            p = pratique.screenshot(tmp)
+            if not p:
+                QApplication.primaryScreen().grabWindow(0).save(tmp)
+                p = tmp
+            img = QImage(p)
+            if img.isNull():
+                raise RuntimeError("capture vide")
+            lignes = guide.lignes_ocr(p, lang)
+            carre, k = guide.image_carree(img)
+            pt_carre = None
+            if point is not None:                       # 🖱️ « c'est quoi ça ? » : le point montré par la souris
+                cx, cy = self._point_capture(img, point)
+                pt_carre = (cx * k, cy * k)
+                for d in lignes:
+                    x, y, w, h = d["box"]
+                    d["_cx"], d["_cy"] = (x + w / 2) * k, (y + h / 2) * k
+            b64 = ""
+            if voit:
+                buf = QBuffer()
+                buf.open(QBuffer.OpenModeFlag.WriteOnly)
+                carre.save(buf, "PNG")
+                import base64
+                b64 = base64.b64encode(bytes(buf.data())).decode()
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+            prompt = guide.consigne(question, lignes, lang, voit=bool(b64), historique=etat.get("faites", []),
+                                    modele=etat.get("modele", []), point=pt_carre)
+            msg = {"role": "user", "content": prompt}
+            if b64:
+                msg["images"] = [b64]
+            if self.ia_remote():
+                txt = ia_api.request(ia_api.conf_from(), [msg], timeout=180, max_tokens=700)
+            elif b64:
+                try:
+                    body = {"model": self.cfg.get("manga_vision") or self.vision_models()[0], "stream": False,
+                            "messages": [msg], "options": {"temperature": 0.2}, "keep_alive": "2m", "format": "json"}
+                    with self._ollama_open(body, 300) as r:
+                        txt = json.load(r)["message"]["content"]
+                except Exception:
+                    if not lignes:
+                        raise
+                    log_error("guide : l'IA qui voit a échoué, on continue avec les textes lus")
+                    prompt2 = guide.consigne(question, lignes, lang, voit=False, historique=etat.get("faites", []),
+                                             modele=etat.get("modele", []), point=pt_carre)
+                    txt = self._llm([{"role": "user", "content": prompt2}], timeout=180, json_mode=True)
+            else:
+                txt = self._llm([msg], timeout=180, json_mode=True)
+            rep = guide.lire_reponse(txt)
+            return rep, guide.placer_marques(rep, lignes, k), (img.width(), img.height())
+
+        def got(res):
+            if isinstance(res, Exception):
+                return self.say("Je n'ai pas réussi à regarder ton écran : " + str(res)[:90])
+            rep, marques, taille = res
+            if marques:
+                c = self.__dict__.get("_guide_calque")
+                if c is None:
+                    c = self._guide_calque = guide.Calque()
+                c.montrer(marques, taille)
+            txt = rep.get("explication") or ("Regarde ce que j'ai entouré !" if marques else
+                                             "Je n'ai rien trouvé à te montrer, désolée. Tu peux reformuler ?")
+            etat.setdefault("faites", []).append(txt[:160])
+            if marques and not rep.get("fini"):
+                txt += "\n" + i18n.tr("(Dis « suivant » quand c'est fait.)") if i18n else "\n(Dis « suivant » quand c'est fait.)"
+            else:
+                but, faites = etat.get("but", ""), list(etat.get("faites", []))
+                etat["but"] = ""
+                if len(faites) >= 2 and not etat.get("modele"):      # un vrai tuto : on propose de le garder
+                    QTimer.singleShot(9000, lambda: self.ask_yes(
+                        "On a fini ! Je garde ce tuto pour te le remontrer une autre fois ? (oui / non)",
+                        lambda: self.tuto_garder(but, faites)))
+            self.say(txt[:900])
+        self._bg(shoot, got)
+        return True
 
     # ---------- accessibilité
     def apply_accessibility(self):
@@ -13859,6 +15369,9 @@ class Companion(QWidget):
                         if n % 6 == 0:
                             self.games.save()
                     B.activity(cls, title, cat, call=call, music=bool(self.music_playing))
+                    if cls and cls != self.__dict__.get("_derniere_cls"):
+                        self._derniere_cls = cls
+                        self.bridge.bg_done.emit(self._appli_nouvelle, cls)
                 B.save()
             except Exception:
                 log_error("cerveau")
@@ -13866,9 +15379,10 @@ class Companion(QWidget):
     def _on_presence(self, ev):
         B = self.brain
         if ev[0] == "depart":
+            self._avant_depart = (B.app, B.title, time.time())
             return
         _k, away, before = ev
-        if not self.cfg.get("presence_accueil", True) or away < 10 * 60 or self.fs_hidden or B.quiet() \
+        if self.concentree() or not self.auto("accueil") or not self.cfg.get("presence_accueil", True) or away < 10 * 60 or self.fs_hidden or B.quiet() \
                 or (self.is_muted() and self.cfg.get("mute_bubbles")):
             return
         self.sleeping = False
@@ -13883,7 +15397,9 @@ class Companion(QWidget):
             msg = B.pick([f"Bonjour{p} ! Bien dormi ?", f"Coucou{p}, bonne journée à toi !", f"Te voilà{p} ! Prêt pour aujourd'hui ?"])
             if first:
                 msg += f" Hier : {first}."
-            return self.say(msg)
+            if assistant_jour and self.cfg.get("humeurs", True) and not self.muet("envies"):   # 💜 son humeur du jour
+                msg += " " + random.choice(assistant_jour.HUMEURS.get(self.humeur(), [""]))
+            return self.say(msg.strip())
         d = cerveau.fmt_d(away)
         if away < 60 * 60:
             msg = B.pick([f"Te revoilà{p} !", f"Re{p} ! ", f"Ah, tu es revenu{p} !", "Coucou, te revoilà !"])
@@ -13900,6 +15416,12 @@ class Companion(QWidget):
             hint = f" Tu veux reprendre « {vu[-1]} » ?"
         elif before == "musique":
             hint = " Je remets de la musique ?"
+        av = self.__dict__.get("_avant_depart")
+        if not hint and av and av[1] and time.time() - av[2] < away + 600 and not re.search(
+                r"viki|compagnon|plasmashell|bureau|desktop", (av[0] or "") + (av[1] or ""), re.I):
+            titre = re.sub(r"\s*[—–-]\s*[^—–-]{2,30}$", "", av[1]).strip()[:60]
+            if titre:
+                hint = f" Tu étais sur « {titre} »."
         self.say((msg + hint).strip())
 
     def _brain_quiet(self):
@@ -13909,6 +15431,8 @@ class Companion(QWidget):
             return False
         if self.cfg.get("contexte_activite", True) and B.quiet():
             return True
+        if self.concentree() or self.muet("spontane"):
+            return True
         if self.cfg.get("routines", True) and B.leaving_soon() is not None:
             return True
         return False
@@ -13916,7 +15440,7 @@ class Companion(QWidget):
     def _brain_tick(self, now):
         """Appelé par _idle_check : départ habituel bientôt, longue session sans pause. True si elle a parlé."""
         B = getattr(self, "brain", None)
-        if not B or self.fs_hidden:
+        if not B or self.fs_hidden or self.concentree():
             return False
         q = self.cfg.setdefault("quotidien", {})
         today = now.date().isoformat()
@@ -14081,8 +15605,9 @@ class Companion(QWidget):
             if f and f not in self.memory.get("faits", []) and cerveau.norm(f) not in B.s["refuses"]:
                 B.pending_fact = (f, time.time())
                 q = f"Je retiens que {f[0].lower() + f[1:]} ?"
-                QTimer.singleShot(9000 if self.ollama_ok else 800, lambda: B.pending_fact and B.pending_fact[0] == f and
-                                  self.say(q))
+                QTimer.singleShot(9000 if self.ollama_ok else 800, lambda: self.apres_focus(
+                    lambda: B.pending_fact and B.pending_fact[0] == f and not self.bubble_text and self.auto("souvenirs")
+                    and self.say(q), 180))
         B.log("discussion", text[:60])
         return False
 
@@ -14105,6 +15630,12 @@ class Companion(QWidget):
             out += f"Aujourd'hui avec lui : {d}. "
         if B.cat:
             out += f"En ce moment, {cerveau.CAT_TXT.get(B.cat, '')}. "
+        try:
+            suivi = self.contexte_suivi(20)               # 🎯 le fil : ses demandes, ses réponses, sa fenêtre
+            if suivi:
+                out += "\n" + suivi + "\nTiens compte de ce fil pour comprendre ses suites (« et demain ? », « ça »…). "
+        except Exception:
+            pass
         return out
 
     # ================================================================== petits plus (plus.py)
@@ -14129,11 +15660,14 @@ class Companion(QWidget):
             self._err_offer = mono
             self.react = ("regarde", mono)
             n = self.brain.error_copied(txt) if getattr(self, "brain", None) and self.cfg.get("fatigue", True) else 1
+            if self.concentree() or not self.auto("presse"):
+                return
             if n >= 3:
-                self.say(f"Ça fait {n} fois que tu copies cette erreur… On la regarde ensemble ? "
-                         "Dis « explique cette erreur ». 🐞")
+                self.ask_yes(f"Ça fait {n} fois que tu copies cette erreur… On la regarde ensemble ? (oui / non) 🐞",
+                             lambda t=txt: self.explain_error(t))
             else:
-                self.say("Oh, ça ressemble à une erreur… Dis « explique cette erreur » et je t'aide ! 🐞")
+                self.ask_yes("Oh, ça ressemble à une erreur… Je t'explique ce qu'elle veut dire ? (oui / non) 🐞",
+                             lambda t=txt: self.explain_error(t))
 
     def clip_recall(self, query):
         h = getattr(self, "clip_hist", None)
@@ -14953,7 +16487,8 @@ class Companion(QWidget):
 
     # ---------- jouer avec elle
     GAMES = (("✊ Pierre, feuille, ciseaux", "pfc"), ("❓ Devinettes", "devinette"), ("🧠 Quiz", "quiz"),
-             ("⭕ Morpion", "morpion"), ("🔢 Devine le nombre", "nombre"))
+             ("⭕ Morpion", "morpion"), ("🔢 Devine le nombre", "nombre"), ("🔴 Puissance 4", "p4"),
+             ("🪢 Pendu", "pendu"), ("🃏 Memory", "memory"))
 
     def play_menu(self):
         if not extras:
@@ -14967,6 +16502,7 @@ class Companion(QWidget):
         games = sorted(self.GAMES, key=lambda g: fav.index(g[1]) if g[1] in fav else 99)
         for i, (lab, k) in enumerate(games):
             m.addAction(lab + ("   ⭐" if i == 0 and fav and k == fav[0] else ""), lambda kk=k: self.start_game(kk))
+        m.addAction("🌿  Coin détente (pêche, jardin, dessin du jour)", lambda: self.open_detente())
         m.addSeparator()
         m.addAction("🎲  Au hasard", lambda: self.start_game(random.choice(self.GAMES)[1]))
         if outils:
@@ -15006,6 +16542,10 @@ class Companion(QWidget):
     def _on_new_mails(self, new):
         if not new or isinstance(new, Exception):
             return
+        if self.concentree():
+            return self.apres_focus(lambda: self._on_new_mails(new))
+        if not self.auto("mails"):
+            return
         s = mails.load()
         quiet = self.fs_hidden or self.in_focus() or self.is_muted()
         for m in new[:3]:
@@ -15014,6 +16554,11 @@ class Companion(QWidget):
         if quiet:
             return
         self._spawn_emoji("📧", 2)
+        new, top = self._mails_tries(new)
+        if top:
+            m, raison = top
+            return self.say(f"Un mail important de {m['de']} ({raison}) : « {m['sujet'][:80]} »." +
+                            (f" Et {len(new) - 1} autre(s)." if len(new) > 1 else ""))
         if len(new) == 1:
             m = new[0]
             self.say(f"Tu as un nouveau mail de {m['de']} : « {m['sujet'][:80]} ».")
@@ -15654,6 +17199,8 @@ class Companion(QWidget):
         body = dict(body)
         if re.match(self.THINKERS, body.get("model", ""), re.I) and "think" not in body:
             body["think"] = False
+        if body.get("model") in self.__dict__.get("_sans_json", set()):
+            body.pop("format", None)                   # ce modèle plante avec le format JSON imposé (on s'en souvient)
         def send(b):
             req = urllib.request.Request(OLLAMA_URL + "/api/chat", data=json.dumps(b).encode(),
                                          headers={"Content-Type": "application/json"})
@@ -15667,7 +17214,63 @@ class Companion(QWidget):
                     return send(body)
                 except urllib.error.HTTPError as e2:
                     msg = self._ollama_error_text(e2)
+            if re.search(r"terminated|memory|allocat|cuda|rocm|vulkan|failed to load|exit status|killed", msg, re.I):
+                # le serveur du modèle a planté (souvent : plus de place en mémoire) : on libère les autres modèles
+                # chargés, on réduit la mémoire de travail, et on réessaie une fois
+                self._ollama_liberer(body.get("model", ""))
+                b2 = dict(body)
+                b2["options"] = dict(body.get("options") or {}, num_ctx=4096)
+                time.sleep(1.5)
+                essais = [b2]
+                if "format" in b2:                     # le format JSON imposé fait planter certains Ollama (grammaire)
+                    b3 = dict(b2)
+                    b3.pop("format", None)
+                    essais.append(b3)
+                b4 = dict(essais[-1], options={"num_ctx": 2048})
+                b4.pop("think", None)
+                essais.append(b4)
+                for b in essais:
+                    try:
+                        r = send(b)
+                        if "format" in body and "format" not in b:
+                            self.__dict__.setdefault("_sans_json", set()).add(body.get("model"))
+                        if b is not b2:
+                            log_info(f"Ollama : {body.get('model', '')} marche sans « {'format JSON' if 'format' not in b else 'think'} » "
+                                     f"(ctx {b['options'].get('num_ctx')})")
+                        return r
+                    except urllib.error.HTTPError as e3:
+                        msg = self._ollama_error_text(e3)
+                    except Exception as e3:
+                        msg = str(e3)
+                    time.sleep(1.0)
+                log_info(f"Ollama a planté avec {body.get('model', '')} à chaque essai : {msg[:300]}")
             raise RuntimeError(self.ollama_explain(msg, body.get("model", ""))) from None
+
+    def _ollama_liberer(self, garder=""):
+        """Décharge de la mémoire les modèles Ollama chargés (sauf celui qu'on veut utiliser)."""
+        try:
+            with urllib.request.urlopen(OLLAMA_URL + "/api/ps", timeout=3) as r:
+                charges = [m.get("name") or m.get("model") for m in json.load(r).get("models", [])]
+        except Exception:
+            charges = []
+        for m in charges:
+            if not m:
+                continue
+            if m == garder:
+                continue
+            try:
+                req = urllib.request.Request(OLLAMA_URL + "/api/generate", data=json.dumps(
+                    {"model": m, "keep_alive": 0}).encode(), headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=10).read()
+            except Exception:
+                pass
+        if garder in charges:                       # lui aussi : il sera rechargé proprement
+            try:
+                req = urllib.request.Request(OLLAMA_URL + "/api/generate", data=json.dumps(
+                    {"model": garder, "keep_alive": 0}).encode(), headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=10).read()
+            except Exception:
+                pass
 
     @staticmethod
     def _ollama_error_text(e):
@@ -15688,9 +17291,11 @@ class Companion(QWidget):
         elif re.search(r"memory|out of memory|oom|cudamalloc|hipmalloc|vram|unable to allocate", low):
             why = (f"pas assez de mémoire pour charger {m}. Essaie un modèle plus petit (translategemma:4b), "
                    "ferme les programmes gourmands, ou coupe la voix naturelle le temps de traduire")
-        elif re.search(r"runner process (has )?terminated|exit status|llama runner|signal: killed|segmentation", low):
-            why = (f"{m} a planté au chargement (souvent la mémoire de la carte graphique est pleine). "
-                   "Essaie un modèle plus petit, ou redémarre Ollama")
+        elif re.search(r"(?:runner|llama-server) process (has )?terminated|process has terminated|exit status|"
+                       r"llama runner|signal: killed|segmentation", low):
+            why = (f"{m} a planté dans Ollama, même après que j'ai libéré la mémoire (souvent : la carte graphique "
+                   "est pleine, ou son pilote — ROCm / CUDA — a un souci). Essaie un modèle plus petit (qwen3:4b), "
+                   "ou redémarre Ollama : systemctl restart ollama")
         elif re.search(r"not found|no such|pull", low):
             why = f"{m} n'est pas installé dans Ollama : retélécharge-le"
         elif re.search(r"unsupported|does not support|template|format", low):
@@ -16031,11 +17636,31 @@ class Companion(QWidget):
         with self.thinking():
             return self._llm(messages, timeout, json_mode, model)
 
+    def modele_discussion(self):
+        """Son cerveau pour discuter / choisir les fonctions : jamais un modèle spécialisé (traduction, vision…)."""
+        m = self.cfg.get("ollama_model", "")
+        if not (manga and m and manga.is_translator_model(m)) and not re.search(r"embed|whisper|tts", m or "", re.I):
+            return m
+        c = self.__dict__.get("_modeles_cache")
+        if not c or time.time() - c[0] > 300:
+            try:
+                with urllib.request.urlopen(OLLAMA_URL + "/api/tags", timeout=3) as r:
+                    noms = [x["name"] for x in json.load(r).get("models", [])]
+            except Exception:
+                noms = []
+            c = self._modeles_cache = (time.time(), noms)
+        bons = [n for n in c[1] if not (manga and manga.is_translator_model(n))
+                and not re.search(r"embed|whisper|tts|rerank|guard|vl\b|llava", n, re.I)]
+        if bons and not self.__dict__.get("_modele_prevenu"):
+            self._modele_prevenu = True
+            log_info(f"modèle de discussion « {m} » = un modèle de traduction : j'utilise « {bons[0]} » pour discuter")
+        return bons[0] if bons else m
+
     def _llm(self, messages, timeout=120, json_mode=False, model=None):
         if self.ia_remote() and not model:
             txt = ia_api.request(ia_api.conf_from(), messages, timeout=timeout)
         else:
-            body = {"model": model or self.cfg["ollama_model"], "stream": False, "messages": messages,
+            body = {"model": model or self.modele_discussion(), "stream": False, "messages": messages,
                     "keep_alive": self._keep_alive() if not model else "10m"}
             if json_mode:
                 body["format"] = "json"
@@ -16086,6 +17711,83 @@ class Companion(QWidget):
         self.text_win.show_text(title, text, info)
 
     def _extra_command(self, text, ta):
+        if re.search(r"^(?:arrete de me (?:dire|repeter) (?:ca|cela)|ne me (?:dis|redis|repete) plus (?:ca|cela|jamais ca)|"
+                     r"ne me le (?:dis|redis|repete) plus|plus jamais ca|mute ca|coupe ce message|stop avec ca|"
+                     r"(?:j.en ai|j.ai) marre de ce message|chut pour ca|stop saying that|don.t tell me that again)\b", ta):
+            return self.muter_dernier()
+        if re.search(r"^(?:ce qu.elle (?:me )?dit|ce que tu (?:me )?dis|mes notifications viki|reglages? des (?:messages|alertes))\b", ta):
+            self.fenetre_muets()
+            return True
+        if curseur_viki and re.search(r"^(?:active |mets |lance )?(?:le )?(?:mode curseur|curseur (?:de )?viki|ton curseur)\b|"
+                                      r"^(?:la )?roue (?:de viki|du curseur)\b", ta):
+            if "roue" in ta:
+                self.roue_curseur()
+            else:
+                self.mode_curseur_menu()
+            return True
+        if curseur_viki and re.search(r"^(?:remets|enleve|retire) (?:mon |le )?(?:ancien )?curseur\b", ta):
+            self.curseur_remettre()
+            return True
+        if assistant_jour:                            # 📅 « je dois payer X avant le 10 »
+            e = assistant_jour.echeance(text)
+            if e:
+                return self.echeance_noter(*e)
+        if re.search(r"^(?:fais[- ]moi |donne[- ]moi )?(?:le |mon )?(?:bilan|resume) (?:de )?(?:ma |la |ta )?journee\b|"
+                     r"^resume[- ]moi ma journee\b|^ma journee en resume\b", ta):
+            return self.bilan_jour()
+        m = re.match(r"^(?:refais|rejoue|remontre[- ]moi|relance) (?:le |mon )?tuto(?:riel)?\s*(.*)$", ta)
+        if m or re.match(r"^(?:mes|les) tutos?\b", ta):
+            return self.tuto_rejouer(m.group(1).strip() if m else "")
+        if re.search(r"^(?:range|organise|arrange|mets) (?:mes |les )?fenetres\b|fenetres cote a cote", ta):
+            return self.ranger_fenetres()
+        if re.search(r"\bqui (?:utilise|ecoute|a acces a) (?:mon |ma |mes )?(?:micro|camera|webcam|fichiers)\b|"
+                     r"\b(?:bilan|verifie) (?:des |mes )?permissions\b|\bqui a acces a quoi\b", ta):
+            self.bilan_permissions()
+            return True
+        if re.search(r"^(?:fais[- ]moi (?:une )?visite(?:r)?|visite guidee|apprends[- ]moi (?:a utiliser )?cette appli|"
+                     r"explique[- ]moi cette appli)", ta):
+            return bool(self.visite_guidee())
+        m = re.match(r"^(?:fais[- ]moi reviser|aide[- ]moi a reviser|interroge[- ]moi (?:sur|en)|(?:fais[- ]moi )?un quiz (?:sur|de|d.)|"
+                     r"quiz me on)\s+(.{2,80})$", ta)
+        if m:
+            return self.reviser(re.sub(r"^(?:mon |ma |mes |le |la |les |l.)", "", m.group(1)))
+        m = re.match(r"^(?:fais[- ]moi |prepare[- ]moi )?une fiche (?:de revision )?(?:sur|de|d.)\s+(.{2,80})$", ta)
+        if m:
+            return self.reviser(m.group(1), mode="fiche")
+        m = re.match(r"^(?:explique[- ]moi|que fait|c.est quoi) (?:cette |la )?commande\s*:?\s+(.+)$", text.strip(), re.I)
+        if m:
+            self.terminal_expliquer(m.group(1))
+            return True
+        if memoire_fichiers:                          # 📚 la mémoire de tes fichiers
+            m = memoire_fichiers.RX_FICHIER.match(ta)
+            if m:
+                return self.memoire_trouver(m.group(1))
+            if memoire_fichiers.RX.search(ta):
+                return self.memoire_demander(text)
+            if re.search(r"^(?:ouvre |montre[- ]moi )?(?:la )?memoire (?:de|des) (?:mes )?fichiers\b", ta):
+                self.memoire_fenetre()
+                return True
+        if re.search(r"\b(?:c.est quoi|quelle est|quel est) (?:cette|la|le|ce) (?:chanson|musique|morceau|titre)\b|"
+                     r"\bqu.est[- ]ce (?:qui joue|qu.on ecoute)\b|\bwhat song is (?:this|playing)\b", ta):
+            return self.chanson_en_cours()
+        if guide:                                     # 👉 le guide à l'écran
+            if guide.RX_EFFACE.search(ta) and self.__dict__.get("_guide_calque") is not None \
+                    and self._guide_calque.actif():
+                self.guide_effacer()
+                self.__dict__.get("_guide", {})["but"] = ""
+                self.say("C'est effacé !")
+                return True
+            if guide.RX_SUITE.match(ta) and (self.__dict__.get("_guide") or {}).get("but"):
+                return bool(self.guide_ecran("", suite=True))
+            if guide.RX_GUIDE.match(ta):
+                return bool(self.guide_ecran(text.strip()))
+        rd = self._rendu()
+        if rd is not None and hasattr(rd, "commande"):    # un personnage d'extension comprend ses commandes
+            try:
+                if rd.commande(text, ta):
+                    return True
+            except Exception:
+                log_error("Commande d'une extension")
         now = time.monotonic()
         if mods and mods.commande(text, ta):             # une commande ajoutée par un mod
             return True
@@ -16513,9 +18215,67 @@ class Companion(QWidget):
             pass
 
     # ---------- presse-papiers
+    def _clip_quota(self):
+        """Pas plus de 3 propositions de traduction par jour (pour ne pas t'embêter)."""
+        j = datetime.date.today().isoformat()
+        q = self.cfg.get("clip_malin_quota") or {}
+        if q.get("j") != j:
+            q = {"j": j, "n": 0}
+        if q["n"] >= 3:
+            return False
+        q["n"] += 1
+        self.cfg["clip_malin_quota"] = q
+        return True
+
+    def _clip_malin(self):
+        """Tu copies une erreur, une adresse, un texte dans une autre langue : elle propose de l'aide (une fois)."""
+        if self.concentree() or self.muet("presse") or not self.cfg.get("clip_malin", True) or GUEST or self.fs_hidden or not self.isVisible() or self.in_focus():
+            return
+        cb = QApplication.clipboard()
+        if cb.ownsClipboard():
+            return
+        txt = (cb.text() or "").strip()
+        if not txt or len(txt) > 8000 or txt == self.__dict__.get("_clip_malin_dernier"):
+            return
+        now = time.monotonic()
+        if now - self.__dict__.get("_clip_malin_t", -999) < 90:
+            return
+        self._clip_malin_dernier = txt
+        py = getattr(self, "_pending_yes", None)
+        if (py and time.time() - py[1] < 60) or self.bubble_text:
+            return
+        ia = self.ollama_ok or self.ia_remote()
+        kind = outils_ia.genre_copie(txt, (self.cfg.get("langue", "fr") or "fr")[:2]) if outils_ia else ""
+        if not kind:
+            return
+        self._clip_malin_t = now
+        self.auto("presse")
+        if kind == "erreur" and ia and not self.cfg.get("clip_erreur", True):
+            self.ask_yes("Tu as copié une erreur. Tu veux que je t'explique ce qu'elle veut dire ? (oui / non)",
+                         lambda t=txt: self.explain_error(t))
+        elif kind == "adresse":
+            adr = re.sub(r"\s+", " ", txt)[:150]
+            self.ask_yes("C'est une adresse ? Je te l'ouvre sur une carte (OpenStreetMap) ? (oui / non)",
+                         lambda a=adr: open_link("https://www.openstreetmap.org/search?query=" +
+                                                 urllib.parse.quote(a)))
+        elif kind == "etranger" and ia and self._clip_quota():
+            self.ask_yes("C'est dans une autre langue : je te le traduis ? (oui / non)",
+                         lambda t=txt: self.clip_action("traduire", text=t))
+
     def _on_clipboard(self):
+        try:
+            cb = QApplication.clipboard()
+            if not cb.ownsClipboard() and self._secret_copie(cb.text() or ""):
+                return                                  # un secret : pas d'historique, pas de proposition
+        except Exception:
+            log_error("secret copié")
         self._clip_remember()
-        if not self.cfg.get("clip_watch", False) or self.fs_hidden or not self.isVisible() or self.in_focus():
+        try:
+            self._clip_malin()
+        except Exception:
+            log_error("presse-papiers malin")
+        if not self.cfg.get("clip_watch", False) or self.cfg.get("clip_malin", True) or self.fs_hidden \
+                or not self.isVisible() or self.in_focus() or self.concentree():
             return
         cb = QApplication.clipboard()
         if cb.ownsClipboard():
@@ -16636,7 +18396,7 @@ class Companion(QWidget):
 
     # ---------- surveillance du PC
     def _check_pc(self):
-        if time.monotonic() < self._next_pc:
+        if time.monotonic() < self._next_pc or self.concentree():
             return
         self._next_pc = time.monotonic() + 60
         if self.cfg.get("updates_check") and time.time() - self.cfg.get("updates_last", 0) > 6 * 3600:
@@ -16646,12 +18406,19 @@ class Companion(QWidget):
             threading.Thread(target=auto_check, daemon=True).start()
         if not self.cfg.get("pc_watch", True):
             return
+        if time.monotonic() > self.__dict__.get("_next_services", 0):     # services en panne (toutes les 30 min)
+            self._next_services = time.monotonic() + 1800
+            threading.Thread(target=self._check_services, daemon=True).start()
         st = extras.pc_status()
         now = time.time()
 
         def warn(key, delay, text):
+            if not self.auto("disque" if key.startswith("disque") else "chaleur"):
+                return False
             if now - self.pc_warned.get(key, 0) > delay:
                 self.pc_warned[key] = now
+                self.cfg["pc_avertis"] = dict(self.pc_warned)       # gardé même si tu relances Viki
+                save_config(self.cfg)
                 self.sleeping = False
                 self.surprise_until = time.monotonic() + 1
                 self._spawn("exclam", 1, 0.3)
@@ -16661,7 +18428,7 @@ class Companion(QWidget):
             return False
         for name in ("système", "perso"):
             if name in st and (st[name][0] < 5 or st[name][1] < 4):
-                if warn("disque" + name, 12 * 3600, f"Attention, ton disque {name} est presque plein : "
+                if warn("disque" + name, 24 * 3600, f"Attention, ton disque {name} est presque plein : "
                         f"plus que {st[name][0]:.1f} Go ! Tu veux que je range tes téléchargements ?"):
                     return
         g = st.get("gpu") or {}
@@ -16673,11 +18440,66 @@ class Companion(QWidget):
         if (st.get("cpu") or 0) >= 95 and warn("cpu", 3600, f"Ton processeur est à {st['cpu']:.0f} °C, c'est chaud !"):
             return
 
+    def _check_services(self):
+        """Un service du système (ou de ta session) est en panne ? Elle le dit une fois par jour, et propose
+        d'expliquer (sans rien réparer toute seule)."""
+        sc = shutil.which("systemctl")
+        if not sc or IS_WIN:
+            return
+        pannes = []
+        for extra in ([], ["--user"]):
+            try:
+                r = subprocess.run([sc, *extra, "--failed", "--no-legend", "--plain"], capture_output=True, text=True,
+                                   timeout=10)
+            except Exception:
+                continue
+            for ligne in r.stdout.splitlines():
+                u = ligne.split()[0] if ligne.split() else ""
+                if u.endswith((".service", ".mount", ".socket", ".timer")):
+                    pannes.append((u, bool(extra)))
+        if not pannes:
+            return
+        vus = self.cfg.setdefault("pannes_vues", {})
+        j = datetime.date.today().isoformat()
+        nouvelles = [(u, user) for u, user in pannes if vus.get(u) != j]
+        if not nouvelles:
+            return
+        for u, _ in nouvelles:
+            vus[u] = j
+        u, user = nouvelles[0]
+        QTimer.singleShot(0, lambda: self.apres_focus(lambda: self.auto("services") and self.ask_yes(
+            f"Petit souci sur ton PC : le service « {u} » est en panne. Tu veux que je t'explique ce qui se passe ? "
+            "(oui / non)", lambda: self.expliquer_service(u, user))))
+
+    def expliquer_service(self, unite, user=False):
+        jc = shutil.which("journalctl")
+        if not jc:
+            return self.say("Il me manque journalctl pour lire ce qui s'est passé.")
+        self.say("Je lis le journal de ce service…")
+
+        def work():
+            r = subprocess.run([jc, *(["--user"] if user else []), "-u", unite, "-n", "40", "--no-pager", "-o", "cat"],
+                               capture_output=True, text=True, timeout=20)
+            log = (r.stdout or r.stderr)[-5000:]
+            lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+            langue = guide.LANGUES.get(lang, "français") if guide else "français"
+            return self.llm([{"role": "user", "content":
+                              f"Le service Linux « {unite} » est en panne. Voici la fin de son journal :\n{log}\n\n"
+                              f"Explique en {langue}, simplement, ce qui se passe, si c'est grave, et ce qu'on peut faire "
+                              "(donne les commandes à taper, sans les lancer). Court et clair."}], timeout=180)
+
+        def done(rep):
+            if isinstance(rep, Exception) or not rep:
+                return self.say("Je n'ai pas réussi à l'expliquer, désolée.")
+            self._show_text("🩺 " + unite, rep, "")
+            self.say(rep[:220] + ("…" if len(rep) > 220 else ""))
+        self._bg(work, done)
+
     def _on_updates(self, n):
         auto = n is not None and n < 0
         if auto:
             n = -1 - n
-            if n < 20:                 # en automatique, elle ne dit rien pour quelques paquets
+            if n < 20 or not self.auto("majs") or self.concentree():   # en automatique : discrète
                 return
         if n is None and IS_WIN:
             self.say("Sous Windows, les mises à jour passent par Windows Update (Paramètres → Windows Update).")
@@ -16899,7 +18721,7 @@ class Companion(QWidget):
 
     # ---------- journal du soir
     def _check_journal(self):
-        if not self.cfg.get("journal", True) or self.sleeping or self.bubble_text or not self.cfg["chatty"]:
+        if self.concentree() or self.muet("bilan") or not self.cfg.get("journal", True) or self.sleeping or self.bubble_text or not self.cfg["chatty"]:
             return
         now = datetime.datetime.now()
         today = now.date().isoformat()
@@ -16910,8 +18732,16 @@ class Companion(QWidget):
             return
         self.cfg["journal_asked"] = today
         save_config(self.cfg)
+        self.auto("bilan")
         self.journal_until = time.monotonic() + 15 * 60
         self.happy_until = time.monotonic() + 1
+        if self.cfg.get("bilan_soir", True):            # 🌙 d'abord le bilan, puis « et toi ? »
+            try:
+                court = self.bilan_jour(question=True)
+            except Exception:
+                court = ""
+            if court and not court.startswith("Journée tranquille"):
+                return self.say(f"Bilan du jour : {court[:160]}. Et toi, c'était comment ? Raconte-moi !")
         self.say(random.choice(["Alors, comment s'est passée ta journée ? Raconte-moi !",
                                 "Tu me racontes ta journée ? Double-clique sur moi pour m'écrire.",
                                 "C'était comment aujourd'hui ? J'ai envie de savoir !"]))
@@ -16997,6 +18827,20 @@ class Companion(QWidget):
             self.morpion.raise_()
             self.morpion.activateWindow()
             self.say("Un morpion ? Je te préviens, je suis forte ! Tu commences.")
+            return
+        if kind in ("p4", "pendu", "memory"):
+            try:
+                import jeux
+            except Exception:
+                return self.say("Il me manque le fichier jeux.py pour ça.")
+            w = self.__dict__.setdefault("jeux_win", {}).get(kind)
+            if w is None:
+                w = self.jeux_win[kind] = {"p4": jeux.Puissance4, "pendu": jeux.Pendu, "memory": jeux.Memory}[kind](self)
+            w.show()
+            w.raise_()
+            w.activateWindow()
+            self.say({"p4": "Un puissance 4 ? Je prends les rouges !", "pendu": "J'ai choisi un mot… À toi de deviner !",
+                      "memory": "Memory ! Je te préviens, j'ai une bonne mémoire… enfin, presque."}[kind])
             return
         self.game = extras.Game(kind)
         self.happy_until = time.monotonic() + 1.2
@@ -17271,6 +19115,27 @@ class Companion(QWidget):
         cmd = [sys.executable] if plateforme.FROZEN else [sys.executable, str(Path(__file__).resolve())]
         subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
                          stderr=open(BASE_CONFIG_DIR / f"invite-{slug}.log", "w"), start_new_session=True)
+
+    def _menu_inviter(self, inv):
+        """Sous-menu : inviter un autre perso sur le bureau (il a ses yeux, sa bouche, sa voix), ou le renvoyer."""
+        mine = Path(self.cfg["character_dir"]).resolve()
+        invited = set(self.cfg.get("invites", []))
+        for d, nm in list_characters():
+            if Path(d).resolve() != mine and str(d) not in invited:
+                inv.addAction(nm, lambda dd=str(d): self.invite(dd))
+        if inv.isEmpty():
+            inv.addAction("(crée d'abord un autre perso)").setEnabled(False)
+        if invited:
+            inv.addSeparator()
+            inv.addAction("💬 Faites la conversation !", self.start_duo)
+            for c in sorted(invited):
+                try:
+                    nm = json.loads((Path(c) / "character.json").read_text()).get("name", Path(c).name)
+                except Exception:
+                    nm = Path(c).name
+                inv.addAction(f"👋 Renvoyer {nm}", lambda cc=c: self.dismiss(cc))
+            if len(invited) > 1:
+                inv.addAction("👋 Renvoyer tout le monde", lambda: [self.dismiss(cc) for cc in sorted(invited)])
 
     def _relaunch_guests(self):
         for cdir in self.cfg.get("invites", []):
@@ -17626,6 +19491,10 @@ class Companion(QWidget):
             self.notif_watch = None
 
     def _on_notif(self, app, summary, body):
+        if self.concentree():
+            return self.apres_focus(lambda: self._on_notif(app, summary, body), 120)
+        if not self.auto("notifs"):
+            return
         mode = self.cfg.get("notif_lire", "")
         if not mode or self.in_focus() or self.fs_hidden:
             return
@@ -18150,6 +20019,8 @@ class Companion(QWidget):
                 self.bridge.fullscreen.emit(full)
 
     def _on_fullscreen(self, full):
+        if not full and self.__dict__.get("_partage"):
+            return                                       # partage d'écran en cours : elle reste cachée
         self.fs_hidden = full
         if fun and (self.overlay or not full):
             self._overlay_tick()                         # neige & co : jamais par-dessus un jeu ou un film
@@ -18880,7 +20751,8 @@ class Companion(QWidget):
             log_error("suivis")
         threading.Thread(target=self._natural_watchdog_bg, daemon=True).start()
         if extras and not GUEST:
-            for chk in (self._check_agenda, self._check_pc, self._update_fete, self._check_journal):
+            for chk in (self._check_agenda, self._check_pc, self._update_fete, self._check_journal, self._vivante_tick,
+                        self._bugs_tick):
                 try:
                     chk()
                 except Exception:
@@ -19599,10 +21471,10 @@ class Companion(QWidget):
             lg.toggled.connect(lambda v: self._extra_command("parlons anglais" if v else "parlons francais",
                                                               "parlons anglais" if v else "parlons francais"))
             jx = m.addMenu("🎮 Jouer avec elle")
-            for label, k in (("Pierre, feuille, ciseaux", "pfc"), ("Devinettes", "devinette"),
-                             ("Quiz de culture générale", "quiz"), ("Morpion", "morpion"),
-                             ("Devine le nombre", "nombre")):
+            for label, k in self.GAMES:
                 jx.addAction(label, lambda kk=k: self.start_game(kk))
+            jx.addSeparator()
+            jx.addAction("🌿  Coin détente (pêche, jardin, dessin du jour)", lambda: self.open_detente())
             if self.game:
                 jx.addAction("Arrêter la partie", lambda: (setattr(self, "game", None), self.say("Partie terminée !")))
             ec = m.addMenu("🎙 Écoute continue" + (" (active)" if self.cfg.get("wake") else ""))
@@ -19626,21 +21498,7 @@ class Companion(QWidget):
                 a.setChecked(self.cfg.get("pet", "") == col)
                 gp.addAction(a)
                 a.triggered.connect(lambda _=False, c=col: self.set_pet(c))
-            inv = m.addMenu("Inviter un personnage")
-            mine = Path(self.cfg["character_dir"]).resolve()
-            invited = set(self.cfg.get("invites", []))
-            for d, nm in list_characters():
-                if Path(d).resolve() != mine and str(d) not in invited:
-                    inv.addAction(nm, lambda dd=str(d): self.invite(dd))
-            if invited:
-                inv.addSeparator()
-                inv.addAction("Faites la conversation !", self.start_duo)
-                for c in sorted(invited):
-                    try:
-                        nm = json.loads((Path(c) / "character.json").read_text()).get("name", Path(c).name)
-                    except Exception:
-                        nm = Path(c).name
-                    inv.addAction(f"Renvoyer {nm}", lambda cc=c: self.dismiss(cc))
+            self._menu_inviter(m.addMenu("Inviter un personnage"))
         pomo = m.addMenu("Minuteur Pomodoro")
         if self.pomodoro:
             pomo.addAction("Arrêter le minuteur", self.stop_pomodoro)
@@ -19834,7 +21692,14 @@ class Companion(QWidget):
             outils.addAction("Y a-t-il des mises à jour ? (internet)", lambda: self._extra_command(
                 "y a des mises a jour", "y a des mises a jour"))
             for key, label in (("clip_watch", "Proposer résumer / traduire / corriger quand je copie un texte"),
-                               ("pc_watch", "Surveiller le PC (disque plein, températures)"),
+                               ("clip_malin", "Proposer de l'aide quand je copie une erreur, une adresse, une autre langue"),
+                               ("pc_watch", "Surveiller le PC (disque plein, températures, services en panne)"),
+                               ("outils_ia", "Son IA lance les bonnes fonctions quand je lui demande avec mes mots"),
+                               ("clip_secret", "Vider le presse-papiers 1 min après un mot de passe copié"),
+                               ("telechargements_veille", "Me proposer de l'aide quand un téléchargement arrive"),
+                               ("partage_cacher", "Se cacher pendant un partage d'écran"),
+                               ("bilan_soir", "Le bilan de ma journée le soir"),
+                               ("humeurs", "Ses humeurs et ses envies du jour"),
                                ("updates_check", "Vérifier les mises à jour toutes les 6 h (internet)"),
                                ("activite", "Commenter ce que je fais (jeux, travail, nuit, musique)"),
                                ("journal", "Me demander ma journée le soir"),
@@ -19941,6 +21806,7 @@ class Companion(QWidget):
             mm.setFont(f)
             self._menu_mods(m)
         m.addAction("🎭  Personnages…", self.open_gallery)
+        self._menu_inviter(m.addMenu("👭  Inviter un perso à côté de moi"))
         if apparence:
             m.addAction("👗  Mon apparence (couleurs, coiffure, silhouette)…", self.open_look)
         m.addAction("📥  Donne-moi un fichier…", self.open_drop_window)
@@ -19950,6 +21816,7 @@ class Companion(QWidget):
             m.addAction("📍  Restos et lieux autour de moi…", lambda: self.nearby({"kind": "restaurant",
                                                                                    "cuisine": None, "near": ""}))
         m.addAction("🎮  Jouer avec elle…", lambda: QTimer.singleShot(0, self.play_menu))
+        m.addAction("🌿  Coin détente (pêche, jardin)…", lambda: self.open_detente())
         if dessin:
             m.addAction("✏️  Carnet de dessin…", self.open_dessin)
         if lecture:
@@ -20000,6 +21867,10 @@ class Companion(QWidget):
         self._save_char_voice()
         self.cfg["character_dir"] = str(cdir)
         self._load_character()
+        if curseur_viki:                                 # 🖱️ le visage du curseur suit le personnage choisi
+            curseur_viki.AVATAR["img"] = self._avatar_viki()
+            if curseur_viki.actif():
+                QTimer.singleShot(1500, lambda: self.curseur_activer(demander=False))
         self._load_char_voice()
         self.setWindowTitle(self.char.get("name", "Viki"))
         self.chat_history = []
@@ -20076,12 +21947,16 @@ class Companion(QWidget):
             b_prec = box.addButton("Précis" if self.hw[1] >= 7 else "Précis (lourd pour ce PC)",
                                    QMessageBox.ButtonRole.AcceptRole)
             b_keep = box.addButton("Garder le fond", QMessageBox.ButtonRole.AcceptRole)
+            b_carnet = box.addButton("✏️ Le faire moi-même (carnet)", QMessageBox.ButtonRole.AcceptRole) \
+                if dessin else None
             box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
             box.exec()
             clicked = box.clickedButton()
             if clicked == b_keep:
                 self._finish_new_character(img)
                 return
+            if b_carnet is not None and clicked == b_carnet:
+                return self._detourer_au_carnet(img, path)
             if clicked not in (b_anime, b_prec):
                 return
             model = "birefnet-general" if clicked == b_prec else "isnet-anime"
@@ -20100,16 +21975,30 @@ class Companion(QWidget):
             threading.Thread(target=work, daemon=True).start()
         else:
             box = QMessageBox(QMessageBox.Icon.Question, "Viki",
-                              "Cette image a un fond. Si c'est un fond uni (blanc, gris…), je peux le retirer "
-                              "moi-même.")
-            b_simple = box.addButton("Retirer le fond uni", QMessageBox.ButtonRole.AcceptRole)
+                              "Cette image a un fond. S'il est uni ou en dégradé (blanc, papier, ciel…), je peux le "
+                              "retirer moi-même. Dans le carnet, tu peux finir à la main avec la baguette 🪄.")
+            b_simple = box.addButton("Retirer le fond", QMessageBox.ButtonRole.AcceptRole)
+            b_carnet = box.addButton("✏️ Retirer le fond et retoucher (carnet)", QMessageBox.ButtonRole.AcceptRole) \
+                if dessin else None
             b_keep = box.addButton("Garder le fond", QMessageBox.ButtonRole.DestructiveRole)
             box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
             box.exec()
+            if b_carnet is not None and box.clickedButton() == b_carnet:
+                return self._detourer_au_carnet(img, path)
             if box.clickedButton() == b_keep:
                 self._finish_new_character(img)
             elif box.clickedButton() == b_simple and visuel:
                 self._finish_new_character(visuel.simple_cutout(img))
+
+    def _detourer_au_carnet(self, img, path=""):
+        """Le fond retiré automatiquement, puis le carnet de dessin pour finir à la main."""
+        self._import_mode = ""
+        try:
+            img = dessin.detourer(img)
+        except Exception:
+            pass
+        self.open_dessin()
+        self.dessin_win.ouvrir_image(img, Path(path).stem if path else "")
 
     def _memory_ok_for(self, model):
         """Vérifie la mémoire libre avant un gros détourage ; propose de libérer de la place."""
@@ -20166,9 +22055,23 @@ class Companion(QWidget):
         if getattr(self, "_import_mode", "") == "objet":
             self._import_mode = ""
             return self._finish_new_object(img)
+        pts = None
+        if img.text("viki_pts"):                        # yeux et bouche déjà placés (carnet de dessin)
+            try:
+                pts = [tuple(q) for q in json.loads(img.text("viki_pts"))]
+                box = QRegion(QBitmap.fromImage(solid_alpha(img.convertToFormat(QImage.Format.Format_ARGB32))
+                                                .createAlphaMask())).boundingRect()
+                ox, oy, h = (box.x(), box.y(), box.height()) if box.isValid() and box.width() > 10 else \
+                    (0, 0, img.height())
+                k = min(1.0, 900 / max(1, h))
+                pts = [((x - ox) * k, (y - oy) * k) for x, y in pts]
+            except Exception:
+                pts = None
+        nom = img.text("viki_nom")
         img = tidy_image(img)
-        dlg = CharacterDialog(img)
+        dlg = CharacterDialog(img, points=pts, **({"name": nom} if nom else {}))
         if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._nouveau_a_cote = False
             return
         data = dlg.result_data()
         slug = re.sub(r"[^a-z0-9]+", "-", data["name"].lower()).strip("-") or "perso"
@@ -20186,6 +22089,15 @@ class Companion(QWidget):
                                         / img.height()), 2),
                      "lash_color": "#2a1414"})
         (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        self._placer_nouveau(cdir)
+
+    def _placer_nouveau(self, cdir, a_cote=False):
+        """Nouveau perso : il prend ma place, ou il vient à côté de moi (choix fait dans le carnet de dessin)."""
+        if a_cote or getattr(self, "_nouveau_a_cote", False):
+            self._nouveau_a_cote = False
+            self.invite(str(cdir))
+            return QTimer.singleShot(5000, lambda: self.say(
+                "Pour le renvoyer : clic droit sur moi, « 👭 Inviter un perso à côté de moi », puis « 👋 Renvoyer »."))
         self.switch_character(cdir)
 
     # ---------- personnage animé (GIF, WebP animé, APNG, MP4, WebM…)
@@ -20255,12 +22167,16 @@ class Companion(QWidget):
             self.switch_character(cdir, greet=False)
             return self.say("C'est noté : je passerai sur cette animation quand je parle !")
         img = r["premiere"]
-        dlg = CharacterDialog(img, name=Path(path).stem[:24], face_mode=(0, False))
+        visage = bool(r.get("visage"))                          # dessin animé : la tête bouge rarement
+        dlg = CharacterDialog(img, name=Path(path).stem[:24],
+                              **({"points": r.get("points")} if visage else {"face_mode": (0, False)}))
         dlg.setWindowTitle("Nouveau personnage animé")
         if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._nouveau_a_cote = False
             return
         data = dlg.result_data()
-        data["yeux"], data["bouche"] = 0, False                 # c'est l'animation qui bouge
+        if not visage:
+            data["yeux"], data["bouche"] = 0, False             # c'est l'animation qui bouge
         slug = re.sub(r"[^a-z0-9]+", "-", data["name"].lower()).strip("-") or "perso"
         cdir = CHAR_ROOT / slug
         n = 2
@@ -20275,6 +22191,9 @@ class Companion(QWidget):
                      "scale": round(min(1.0, (580 if img.height() > 1.7 * img.width() else 460) / img.height()), 2),
                      "lash_color": "#2a1414", "anim": {"n": r["n"], "fps": r["fps"]}})
         (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        if getattr(self, "_nouveau_a_cote", False):
+            self._nouveau_a_cote = False
+            return self._placer_nouveau(cdir, a_cote=True)
         self.switch_character(cdir)
         extra = f" J'ai effacé le fond {r['fond']}." if r.get("fond") else ""
         self.say(f"Me voilà en version animée ! {r['n']} images.{extra}")
@@ -20863,9 +22782,24 @@ def log_note(txt):
         pass
 
 
+def log_info(texte):
+    """Une ligne d'information dans erreurs.log (pour comprendre un souci sans planter)."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(ERR_LOG, "a") as f:
+            f.write(f"\n===== {datetime.datetime.now():%d/%m %H:%M:%S} info\n{texte}\n")
+    except Exception:
+        pass
+
+
+BUGS_NOUVEAUX = []          # les erreurs depuis la dernière proposition d'envoyer un rapport
+
+
 def log_error(where="", exc=None):
     """Note l'erreur en cours (ou exc, une erreur venue d'un fil) dans erreurs.log, sans faire planter l'appli."""
     import traceback
+    BUGS_NOUVEAUX.append((time.time(), str(where)[:60]))
+    del BUGS_NOUVEAUX[:-20]
     txt = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)) if exc is not None \
         else traceback.format_exc()
     try:
@@ -20954,7 +22888,7 @@ def open_link(url):
         QDesktopServices.openUrl(QUrl(url))
 
 
-CLI_CMDS = ("say", "dis", "emote", "run", "fini", "jouer", "play", "aide", "help")
+CLI_CMDS = ("say", "dis", "emote", "run", "fini", "jouer", "play", "aide", "help", "fichier", "explique")
 
 
 def cli(args):
@@ -20973,6 +22907,26 @@ def cli(args):
         payload = ("say:" + " ".join(rest)).encode()
     elif cmd == "emote":
         payload = ("emote:" + (rest[0] if rest else "😊")).encode()
+    elif cmd == "explique":                  # Alt+E dans le terminal : la commande en cours de frappe
+        ligne = " ".join(rest).strip()
+        if not ligne:
+            return 0
+        try:
+            import assistant_jour as _aj
+            dg = _aj.dangers(ligne)
+        except Exception:
+            dg = []
+        if dg:
+            print("\n\033[1;31m⚠️  Attention : cette commande " + " ; ".join(dg) + ".\033[0m", file=sys.stderr)
+        else:
+            print("\n\033[2m(Viki : rien de dangereux à première vue, je t'explique dans ma bulle.)\033[0m",
+                  file=sys.stderr)
+        payload = ("explique:" + ligne).encode("utf-8", "replace")
+        code = 0
+    elif cmd == "fichier":                   # clic droit dans le gestionnaire de fichiers
+        if len(rest) < 2:
+            return 2
+        payload = ("fichier:" + rest[0] + "\n" + "\n".join(os.path.abspath(x) for x in rest[1:])).encode()
     elif cmd in ("jouer", "play"):
         payload = b"jouer"
     elif cmd == "fini":                      # envoyé par le suivi automatique du terminal (dev.py)
@@ -21015,6 +22969,28 @@ def cli(args):
         sock.flush()
         sock.waitForBytesWritten(1500)
         sock.disconnectFromServer()
+    elif cmd == "fichier":                   # Viki dort : on la lance, puis on lui passe les fichiers
+        try:
+            import shlex as _sh
+            import touches as _t
+            subprocess.Popen(_sh.split(_t.lanceur()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except Exception:
+            return 1
+        for _i in range(40):
+            time.sleep(0.5)
+            sock = QLocalSocket()
+            sock.connectToServer(INSTANCE_BASE)
+            if sock.waitForConnected(500):
+                time.sleep(2.5)
+                sock.write(payload)
+                sock.flush()
+                sock.waitForBytesWritten(1500)
+                sock.disconnectFromServer()
+                return 0
+        return 1
+    elif cmd == "explique":
+        return 0
     elif cmd != "run":
         print("Viki n'est pas lancée.", file=sys.stderr)
         return 1
@@ -21139,7 +23115,8 @@ def main():
         sock.write(b"parler" if "--parler" in sys.argv else b"ecrire" if "--ecrire" in sys.argv
                    else b"traduire" if "--traduire" in sys.argv else b"lire" if "--lire" in sys.argv
                    else b"ecran" if "--ecran" in sys.argv else b"zone" if "--zone" in sys.argv
-                   else b"salon" if "--salon" in sys.argv else b"montrer")
+                   else b"salon" if "--salon" in sys.argv else b"guide" if "--guide" in sys.argv
+                   else b"curseur" if "--curseur" in sys.argv else b"montrer")
         sock.flush()
         sock.waitForBytesWritten(300)
         return
@@ -21231,6 +23208,14 @@ def main():
                 save_config(w.cfg)
                 w._rebuild_menus()
                 return
+            if msg.startswith("explique:"):         # Alt+E dans le terminal
+                QTimer.singleShot(50, lambda: w.terminal_expliquer(msg[9:]))
+                return
+            if msg.startswith("fichier:"):          # clic droit « Viki » sur un fichier
+                w.show()
+                act, _, chemins = msg[8:].partition("\n")
+                QTimer.singleShot(50, lambda: w.fichier_action(act.strip(), [x for x in chemins.split("\n") if x]))
+                return
             if msg.startswith("say:"):              # viki say "…"
                 w.show()
                 w.say(msg[4:].strip() or "Coucou !")
@@ -21284,6 +23269,10 @@ def main():
                 w.translate_selection()
             elif "lire" in msg:
                 w.read_selection()
+            elif "guide" in msg:
+                w.guide_demander()
+            elif "curseur" in msg:
+                w.roue_curseur()
             elif "ecran" in msg:
                 w.describe_screen()
         c.readyRead.connect(read)
@@ -21295,7 +23284,8 @@ def main():
     if "--ecrire" in sys.argv:
         QTimer.singleShot(1200, w.open_input)
     for _flag, _fn in (("--traduire", "translate_selection"), ("--lire", "read_selection"), ("--ecran", "describe_screen"),
-                       ("--zone", "translate_zone"), ("--salon", "open_services")):
+                       ("--zone", "translate_zone"), ("--salon", "open_services"),
+                       ("--guide", "guide_demander"), ("--curseur", "roue_curseur")):
         if _flag in sys.argv:
             QTimer.singleShot(2500, getattr(w, _fn))
     if "--capture" in sys.argv:   # pour les tests : capture d'écran puis quitter

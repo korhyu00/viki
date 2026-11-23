@@ -437,6 +437,8 @@ def useful_text(t):
     if not t or t == "-":
         return False
     good = len(re.findall(r"[\w\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", t))
+    if good == 1 and _CJK.search(t) and len(t.replace(" ", "")) <= 3:
+        return True                                    # « え？ », « 何！ » : une vraie réplique très courte
     return good >= 2 and good / max(1, len(t.replace(" ", ""))) >= 0.6
 
 
@@ -730,6 +732,52 @@ def clean_ocr(t):
     return "" if t.strip() in ("-", "—", "") else t.strip()
 
 
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff66-\uff9f]")
+_BAVARD = re.compile(                                 # ce qu'une IA dit quand elle ne lit / traduit pas la bulle
+    r"(il n.y a (pas|aucun) (de )?texte|aucun texte|pas de texte (visible|lisible|dans)|texte (illisible|absent|vide)|"
+    r"je ne (peux|parviens|suis pas en mesure)[^.!?]{0,40}(lire|traduire|transcrire|voir)|je n.arrive pas [àa] (lire|traduire)|"
+    r"d[ée]sol[ée]e?,? (mais )?je (ne|n.)|impossible de (lire|traduire|transcrire)|cette (image|bulle) (ne )?(montre|contient|est)|"
+    r"l.image (montre|contient|ne contient|repr[ée]sente)|en tant qu.ia|"
+    r"\bno (visible |readable )?text\b|there is no (visible |readable )?text|the (image|bubble|panel) (shows|contains|is|does|depicts)|"
+    r"this (image|bubble|panel) (shows|contains|is|does|depicts)|i.?m sorry,? (but )?i|sorry,? (but )?i (can|could|am)|"
+    r"i (can.t|cannot|am unable to|could not|don.t see)[^.!?]{0,30}(read|translate|transcribe|see|text)|"
+    r"unable to (read|translate|transcribe)|as an ai|cannot translate|"
+    r"traceback \(most recent|\bexception:|\berror:|\berreur ?:|http error|timed out|connection refused|"
+    r"^n/?a$|^none$|^null$|^undefined$|^\(?vide\)?$|^\(?empty\)?$|^\.\.\.$|^…$)", re.I)
+
+
+def texte_lu(t, src="ja"):
+    """Le texte lu dans une bulle, sans les commentaires d'une IA qui voit (« Il n'y a pas de texte »…)."""
+    t = clean_ocr(t)
+    t = re.sub(r"^(texte|text|transcription|réponse|answer)\s*:\s*", "", t, flags=re.I).strip().strip('"«»“”')
+    if not t or _BAVARD.search(t):
+        return ""
+    if src in ("ja", "zh", "ko", "auto") and not _CJK.search(t) and len(re.findall(r"[A-Za-zÀ-ÿ]{2,}", t)) >= 3:
+        return ""                                      # une phrase en français/anglais : un commentaire, pas la bulle
+    return t
+
+
+def traduction_propre(t, original=""):
+    """La traduction rendue par l'IA, nettoyée ; "" si c'est un refus, une erreur ou un commentaire."""
+    if not isinstance(t, str):
+        return ""
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S).strip()
+    t = re.sub(r"^(voici( la)? traduction|traduction|translation|here is the translation|réponse)\s*:?\s*", "", t,
+               flags=re.I).strip()
+    t = re.sub(r"\s*\((note|n\.?b\.?|nb)\s*:.*\)\s*$", "", t, flags=re.I | re.S).strip()
+    t = re.split(r"\n\s*(note|nb|remarque)\s*:", t, flags=re.I)[0].strip()
+    t = t.strip().strip('"«»“”').strip()
+    if not t or t in ("-", "—", "…", "..."):
+        return ""
+    if t.startswith(("{", "[")) or re.search(r'"\s*\d+\s*"\s*:', t):
+        return ""                                      # un morceau de JSON, pas une phrase
+    if _BAVARD.search(t) and not _BAVARD.search(original or ""):
+        return ""
+    if original and t == original.strip() and _CJK.search(t):
+        return ""                                      # pas traduit du tout
+    return t
+
+
 # ================================================================== modèles de traduction (Ollama, sur ton PC)
 # (nom, taille, description) — classés du plus léger au plus lourd ; ta carte RX 6600 a 8 Go
 MODELES = [
@@ -851,10 +899,11 @@ class Pipeline:
         if self.engine == "mangaocr":
             if self.ocr is None:
                 self.ocr = MangaOcr(self.comp.manga_ocr_python())
-            return lambda path, crop, vert: clean_ocr(self.ocr.read(path))
+            return lambda path, crop, vert: texte_lu(self.ocr.read(path), self.src)
         if self.engine == "vision":
-            return lambda path, crop, vert: clean_ocr(self.comp.vision_read(crop, vision_prompt(self.src)))
-        return lambda path, crop, vert: clean_ocr(tesseract_read(path, "ja" if self.src == "auto" else self.src, vert))
+            return lambda path, crop, vert: texte_lu(self.comp.vision_read(crop, vision_prompt(self.src)), self.src)
+        return lambda path, crop, vert: texte_lu(tesseract_read(path, "ja" if self.src == "auto" else self.src, vert),
+                                                 self.src)
 
     def read_bubbles(self, img, bubbles, idx):
         reader = self._reader()
@@ -867,74 +916,75 @@ class Pipeline:
             path = self.tmp / f"p{idx}_b{j}.png"
             cv2.imwrite(str(path), crop)
             tw, th = b["text_box"][2], b["text_box"][3]
-            try:
-                b["original"] = reader(str(path), crop, th > tw * 1.3)
-            except Exception as e:
-                b["original"] = ""
-                b["erreur"] = repr(e)[:160]
+            for essai in range(2):                     # une erreur passagère : on réessaie une fois
+                try:
+                    b["original"] = reader(str(path), crop, th > tw * 1.3)
+                    b.pop("erreur", None)
+                    break
+                except Exception as e:
+                    b["original"] = ""
+                    b["erreur"] = repr(e)[:160]
 
     # --- traduction
+    def _demande(self, msgs, timeout=300):
+        """Une réponse JSON de l'IA (None si elle échoue)."""
+        try:
+            r = (self.comp.llm_json_model(self.model, msgs) if self.model else
+                 self.comp.llm_json(msgs, timeout=timeout))
+        except Exception:
+            return None
+        if isinstance(r, list):                        # certains modèles renvoient une liste
+            r = {str(i + 1): t for i, t in enumerate(r)}
+        return r if isinstance(r, dict) else None
+
+    @staticmethod
+    def _valeur(r, cle):
+        t = r.get(cle) if r else None
+        if isinstance(t, dict):
+            t = t.get("traduction") or t.get("texte") or t.get("translation") or ""
+        return t
+
     def translate(self, bubbles, contexte=""):
         items = [(i + 1, b["original"]) for i, b in enumerate(bubbles) if b.get("original") and not b.get("ignore")]
         if not items:
             return
+
+        def poser(i, t):
+            t = traduction_propre(t, bubbles[i - 1].get("original", ""))
+            if t:
+                bubbles[i - 1]["traduction"] = t
+                bubbles[i - 1].pop("non_traduite", None)
+            return bool(t)
         if is_translator_model(self.model):              # TranslateGemma : bulle par bulle
             for i, txt in items:
-                if self.stop:
-                    return
-                out = self.comp.llm_model(self.model, [{"role": "user", "content":
-                                                        translategemma_prompt(txt, self.src, self.dst)}])
-                bubbles[i - 1]["traduction"] = out.strip().strip('"«»').strip()
-            return
-        msgs = translation_prompt(items, self.src, self.dst, contexte)
-        try:
-            res = (self.comp.llm_json_model(self.model, msgs) if self.model else
-                   self.comp.llm_json(msgs, timeout=300))
-        except Exception:
-            res = None
-        if isinstance(res, list):                       # certains modèles renvoient une liste
-            res = {str(i + 1): t for i, t in enumerate(res)}
-        for i, b in enumerate(bubbles):
-            t = res.get(str(i + 1)) if isinstance(res, dict) else None
-            if isinstance(t, dict):
-                t = t.get("traduction") or t.get("texte") or ""
-            if isinstance(t, str) and t.strip():
-                b["traduction"] = t.strip()
-        # bulles oubliées par le modèle (réponse coupée, numéros mélangés…) : d'abord toutes ensemble,
-        # puis une par une s'il en reste quelques-unes
-        missing = [(i, t) for i, t in items if not bubbles[i - 1].get("traduction")]
-        if len(missing) > 1 and not self.stop:
-            try:
-                again = translation_prompt([(k + 1, t) for k, (_i, t) in enumerate(missing)], self.src, self.dst,
-                                           contexte)
-                r = (self.comp.llm_json_model(self.model, again) if self.model else
-                     self.comp.llm_json(again, timeout=300))
-                if isinstance(r, list):
-                    r = {str(k + 1): t for k, t in enumerate(r)}
-                for k, (i, _t) in enumerate(missing):
-                    t = r.get(str(k + 1)) if isinstance(r, dict) else None
-                    if isinstance(t, dict):
-                        t = t.get("traduction") or t.get("texte") or ""
-                    if isinstance(t, str) and t.strip():
-                        bubbles[i - 1]["traduction"] = t.strip()
-            except Exception:
-                pass
-        missing = [(i, t) for i, t in items if not bubbles[i - 1].get("traduction")]
-        for i, txt in (missing if len(missing) <= 4 else []):
-            b = bubbles[i - 1]
-            if self.stop:
-                continue
-            try:
-                one = translation_prompt([(1, txt)], self.src, self.dst, contexte)
-                r = (self.comp.llm_json_model(self.model, one) if self.model else
-                     self.comp.llm_json(one, timeout=120))
-                t = r.get("1") if isinstance(r, dict) else (r[0] if isinstance(r, list) and r else None)
-                if isinstance(t, dict):
-                    t = t.get("traduction") or t.get("texte") or ""
-                if isinstance(t, str) and t.strip():
-                    b["traduction"] = t.strip()
-            except Exception:
-                pass
+                for essai in range(2):
+                    if self.stop:
+                        return
+                    try:
+                        out = self.comp.llm_model(self.model, [{"role": "user", "content":
+                                                                translategemma_prompt(txt, self.src, self.dst)}])
+                    except Exception:
+                        out = ""
+                    if poser(i, out):
+                        break
+        else:
+            r = self._demande(translation_prompt(items, self.src, self.dst, contexte))
+            for i, _t in items:
+                poser(i, self._valeur(r, str(i)))
+            # bulles oubliées ou mal traduites : par petits paquets, puis une par une
+            for taille in (6, 1):
+                manquantes = [(i, t) for i, t in items if not bubbles[i - 1].get("traduction")][:40]
+                for k in range(0, len(manquantes), taille):
+                    if self.stop:
+                        return
+                    paquet = manquantes[k:k + taille]
+                    r = self._demande(translation_prompt([(n + 1, t) for n, (_i, t) in enumerate(paquet)],
+                                                         self.src, self.dst, contexte), timeout=180)
+                    for n, (i, _t) in enumerate(paquet):
+                        poser(i, self._valeur(r, str(n + 1)))
+        for i, _t in items:                              # encore rien : on garde le texte d'origine (pas de trou)
+            if not bubbles[i - 1].get("traduction"):
+                bubbles[i - 1]["non_traduite"] = True
 
     def render(self, idx):
         pg = self.proj["pages"][idx]
@@ -1579,8 +1629,11 @@ def make_window(comp):
                        "dans ta carte graphique (7-8 milliards de paramètres) va bien plus vite.")
             elif spent and max(pipe.stats, key=pipe.stats.get) == "lecture" and pipe.engine == "vision":
                 tip = " Astuce : pour le japonais, manga-ocr lit les bulles bien plus vite que l'IA qui voit."
+            nt = sum(1 for pg in proj.get("pages", []) for b in pg.get("bulles", []) if b.get("non_traduite"))
             self.state.setText(f"✅ {done} page(s) traduite(s) dans « {pipe.out.name} »."
                                + (f" ⚠️ {len(errs)} page(s) en erreur : {errs[0]['erreur'][:350]}" if errs else "")
+                               + (f" · {nt} bulle(s) laissée(s) en version originale (l'IA n'a rien donné de "
+                                  f"correct) : corrige-les à droite ou « Retraduire »." if nt else "")
                                + (f"\n⏱ Temps : {spent}." + tip if spent else ""))
             comp.say(f"J'ai fini ! {done} page{'s' if done > 1 else ''} traduite{'s' if done > 1 else ''}. "
                      "Tu peux corriger une bulle à droite si besoin.")

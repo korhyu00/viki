@@ -8,7 +8,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.9.38-beta"
+VERSION = "0.9.40-beta"
 REPO = os.environ.get("VIKI_REPO", "korhyu00/viki")
 API = os.environ.get("VIKI_API", "https://api.github.com").rstrip("/")
 PAGE = f"https://github.com/{REPO}/releases/latest"

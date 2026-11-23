@@ -1126,6 +1126,10 @@ class SettingsWindow(QWidget):
                          "q_repas", default=True)
             self._switch(card, "Ouvrir la recette à l'heure du repas", "La fenêtre cuisine s'ouvre à côté d'elle "
                          "avec la recette en images (ou le repas prévu dans ta semaine).", "repas_fenetre", default=True)
+            self._switch(card, "Photos des plats", "Une photo du plat (Wikipédia) dans la recette. Seulement si internet "
+                         "est permis (Vie privée) ; les photos sont gardées sur ton PC.", "cuisine_photos", default=True)
+            self._switch(card, "Me proposer de jouer de temps en temps", "Une petite partie, la pêche, le jardin ou le "
+                         "dessin du jour, toutes les 2 à 4 heures (jamais en concentration).", "q_jeux", default=True)
             self._switch(card, "Défi de la semaine", "Un petit défi santé chaque lundi (eau, marche, sommeil…). "
                          "Dis « défi fait » quand c'est réussi.", "q_defi", default=True)
             self._switch(card, "Me dire d'aller dormir", "Après minuit, si tu es encore sur le PC.", "q_sommeil",
@@ -1386,6 +1390,11 @@ class SettingsWindow(QWidget):
                                                  ("Quiz", "quiz"))])
             self._buttons(card, *[self._button(lab, lambda _=False, k=k: c.start_game(k))
                                   for lab, k in (("Morpion", "morpion"), ("Devine le nombre", "nombre"))])
+            self._buttons(card, *[self._button(lab, lambda _=False, k=k: c.start_game(k))
+                                  for lab, k in (("🔴 Puissance 4", "p4"), ("🪢 Pendu", "pendu"), ("🃏 Memory", "memory"))])
+            if hasattr(c, "open_detente"):
+                self._buttons(card, self._button("🌿  Coin détente (pêche, jardin, dessin du jour)",
+                                                 lambda: c.open_detente(), True))
             card = self._card("Vie quotidienne")
             self._buttons(card, self._button("📚  Mode lecture (livres)…", lambda: c.open_reader(), True),
                       self._button("📖  Histoire du soir", lambda: c.tell_story()),

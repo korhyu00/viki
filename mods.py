@@ -40,6 +40,7 @@ _ronds = {}             # "mod:<id>:<rond>" -> {"icone", "nom", "aide", "fn" | "
 _menus = []             # (id, libellé, fonction)
 _minuteurs = {}         # id -> [QTimer]
 _erreurs = {}           # id -> texte de l'erreur
+_types = {}             # type de personnage -> (id du mod, fabrique(dossier, character.json) -> rendu)
 
 
 def _slug(t):
@@ -392,6 +393,23 @@ class API:
         _minuteurs.setdefault(self.id, []).append(t)
         return t
 
+    def ajouter_type_personnage(self, nom, fabrique):
+        """Un nouveau genre de personnage (character.json : "type": nom). fabrique(dossier, fiche) renvoie un
+        « rendu » avec frame(now, w, h, dpr) -> QPixmap, et au choix : appui(x, y), glisse(x, y),
+        lache(x, y, bouge), clic(x, y) -> True si pris en charge (x, y : fractions de l'image),
+        commande(texte, ta) -> True si pris en charge."""
+        _types[str(nom)] = (self.id, fabrique)
+
+    @property
+    def compagnon(self):
+        """Viki elle-même (pour les mods qui vont loin : à utiliser avec soin)."""
+        return self._c
+
+    @property
+    def module(self):
+        """Le module compagnon (CHAR_ROOT, APP_DIR, make_hitmask…)."""
+        return sys.modules.get(type(self._c).__module__)
+
     # ses réglages à lui (gardés entre deux lancements)
     @property
     def reglages(self):
@@ -443,6 +461,8 @@ def desactiver_code(mid):
         t.stop()
     _commandes[:] = [c for c in _commandes if c[0] != mid]
     _menus[:] = [x for x in _menus if x[0] != mid]
+    for k in [k for k, v in _types.items() if v[0] == mid]:
+        _types.pop(k, None)
     for k in [k for k, v in _ronds.items() if v.get("mod") == mid]:
         _ronds.pop(k, None)
 
@@ -461,6 +481,12 @@ def commande(texte, ta):
             _sur(mid, fn, texte)
             return True
     return False
+
+
+def type_personnage(nom):
+    """La fabrique d'un genre de personnage ajouté par un mod (ou None)."""
+    v = _types.get(str(nom or ""))
+    return v[1] if v else None
 
 
 def erreur(mid):

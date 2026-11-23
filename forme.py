@@ -736,6 +736,10 @@ class MuscuWin(_Fenetre):
         self.comp.say(f"Séance terminée, bravo ! {mins} minutes de sport 💪"
                       + (f" C'est ta {semaine}e séance de la semaine !" if semaine > 1 else "")
                       + " Pense à boire et à t'étirer.")
+        if hasattr(self.comp, "open_cuisine"):
+            QTimer.singleShot(6000, lambda: self.comp.ask_yes(
+                "Une idée de repas spécial sport pour bien récupérer ? (oui / non)",
+                lambda: self.comp.open_cuisine(None, 0, sportif=True)))
         self.prog = None
         _vider(self.zone)
         l = QLabel(f"🎉 {tr('Bravo !')}\n\n{mins} min · {n} " + tr("séance(s) au total"))

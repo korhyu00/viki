@@ -138,7 +138,18 @@ def connect(s, timeout=25):
 
 def explain(e):
     t = str(e)
+    m = re.fullmatch(r"\s*b(['\"])(.*)\1\s*", t, re.S)          # b'[ALERT] …' -> [ALERT] …
+    if m:
+        t = m.group(2)
     low = t.lower()
+    if "application-specific password" in low or "app password" in low or "185833" in low:
+        return ("Gmail refuse ton mot de passe habituel : il faut un « mot de passe d'application ». "
+                "1) Active la validation en 2 étapes sur ton compte Google. "
+                "2) Va sur myaccount.google.com/apppasswords, crée un mot de passe nommé « Viki ». "
+                "3) Colle les 16 lettres (sans espaces) à la place de ton mot de passe ici.")
+    if "web login required" in low or "please log in via your web browser" in low:
+        return ("ton fournisseur bloque la connexion : connecte-toi une fois à ton webmail depuis ton navigateur, "
+                "vérifie que l'accès IMAP est activé dans ses réglages, puis réessaie.")
     if "authenticationfailed" in low or "invalid credentials" in low or "login failed" in low or "auth" in low:
         return ("connexion refusée : vérifie l'adresse et le mot de passe d'application (pas ton mot de passe "
                 "habituel pour Gmail, Yahoo, iCloud…)")

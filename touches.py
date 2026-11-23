@@ -16,6 +16,8 @@ ACTIONS = [
     ("zone", "--zone", "Traduire une zone de l'écran", "Meta+Alt+T"),
     ("salon", "--salon", "Ouvrir le Salon (séries, Netflix, Spotify…)", "Meta+Alt+C"),
     ("parler", "--parler", "Lui parler au micro", "Meta+Alt+M"),
+    ("guide", "--guide", "Montre-moi sur l'écran", "Meta+Alt+G"),
+    ("curseur", "--curseur", "La roue de Viki autour de la souris", "Meta+Alt+Space"),
 ]
 PREFIXE = "viki-raccourci-"
 
@@ -52,9 +54,20 @@ def _texte(combo):
     return combo.replace("Meta", "Super")
 
 
+def env_systeme():
+    """Pour les outils du bureau : sans les bibliothèques de l'AppImage (sinon kwriteconfig6, qdbus… plantent)."""
+    env = dict(os.environ)
+    if "COMPAGNON_ORIG_LD" in env:
+        if env["COMPAGNON_ORIG_LD"]:
+            env["LD_LIBRARY_PATH"] = env["COMPAGNON_ORIG_LD"]
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
 def _run(cmd, timeout=8):
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env_systeme())
         return r.returncode, r.stdout.strip()
     except Exception as e:
         return 1, str(e)

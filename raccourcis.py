@@ -17,6 +17,10 @@ def _sa(t):
     return "".join(c for c in unicodedata.normalize("NFD", t or "") if unicodedata.category(c) != "Mn").lower()
 
 
+def C_mod(c):
+    return __import__("sys").modules[type(c).__module__]
+
+
 def actions(c):
     """Le registre. Chaque entrée n'apparaît que si la fonction existe dans cette version de Viki."""
     C = __import__("sys").modules[type(c).__module__]
@@ -84,12 +88,34 @@ def actions(c):
     add("manga", "📚", "Traduire un manga", "media", (lambda: c.open_manga()) if has("open_manga") and C.manga else None,
         "manga traduire scan bd")
     # créer
+    add("detente", "🌿", "Coin détente", "jour", getattr(c, "open_detente", None),
+        "detente peche pecher jardin potager chill jeu calme dessin du jour")
     add("dessin", "✏️", "Carnet de dessin", "creer", getattr(c, "open_dessin", None),
         "dessin dessiner peindre crayon perso personnage croquis")
     add("images", "🖼️", "Atelier d'images", "creer", getattr(c, "image_dialog", None), "image dessin generer photo art")
     add("studio", "🎼", "Studio musique", "creer", getattr(c, "open_music_studio", None),
         "composer chanson creer musique paroles")
     add("pomodoro", "🍅", "Pomodoro 25 min", "pc", lambda: c.start_pomodoro(25, "travail"), "minuteur travail focus timer")
+    add("memoire", "📚", "Mémoire de mes fichiers", "jour", getattr(c, "memoire_fenetre", None),
+        "memoire fichiers notes documents cours dossiers chercher retrouver pdf")
+    add("clicfichiers", "🖱️", "Viki dans le clic droit des fichiers", "pc", getattr(c, "clic_fichiers_installer", None),
+        "clic droit dolphin nautilus nemo fichiers menu contextuel resumer traduire")
+    add("bilan", "🌙", "Le bilan de ma journée", "jour", getattr(c, "bilan_jour", None),
+        "bilan journee resume soir aujourd'hui temps passe")
+    add("tutos", "📘", "Mes tutos", "pc", (lambda: c.tuto_rejouer("")) if hasattr(c, "tuto_rejouer") else None,
+        "tuto tutoriel etapes refaire guide")
+    add("fenetres", "🪟", "Ranger mes fenêtres côte à côte", "pc", getattr(c, "ranger_fenetres", None),
+        "fenetres ranger organiser cote a cote mosaique")
+    add("permissions", "🔐", "Qui a accès à mon micro, ma caméra, mes fichiers", "pc", getattr(c, "bilan_permissions", None),
+        "permissions micro camera webcam flatpak acces vie privee")
+    add("visite", "🎓", "Visite guidée de cette appli", "pc", getattr(c, "visite_guidee", None),
+        "visite guidee apprendre logiciel appli tutoriel")
+    add("terminal", "💻", "Alt+E dans le terminal : expliquer une commande", "pc", getattr(c, "terminal_installer", None),
+        "terminal commande expliquer shell bash zsh fish danger")
+    add("curseur", "🖱️", "Mode curseur Viki", "elle", getattr(c, "mode_curseur_menu", None),
+        "curseur souris pointeur roue mode curseur couleur copier texte")
+    add("guide", "👉", "Montre-moi sur l'écran", "pc", getattr(c, "guide_demander", None),
+        "guide montre ecran entoure souligne ou cliquer aide fenetre explique")
     add("fichier", "📥", "Donne-moi un fichier", "pc", getattr(c, "open_drop_window", None), "fichier glisser deposer")
     add("ranger", "🗂️", "Ranger mes téléchargements", "pc", getattr(c, "tidy_downloads", None), "ranger trier dossier")
     add("vieprivee", "🛡️", "Vie privée et sécurité", "pc", (lambda: c.open_privacy(0)) if hasattr(c, "open_privacy") else None,
@@ -202,6 +228,12 @@ def short_menu(c, tray=False):
         fixed.append(ra)
     a = m.addAction("🏠  " + tr(c, "Accueil (mes raccourcis)"), lambda: open_home(c))
     fixed.append(a)
+    if hasattr(c, "remplir_menu_curseur") and getattr(C_mod(c), "curseur_viki", None):
+        cm = m.addMenu("🖱️  " + tr(c, "Mode curseur"))
+        c.remplir_menu_curseur(cm)
+        fixed.append(cm.menuAction())
+    if hasattr(c, "fenetre_muets"):
+        fixed.append(m.addAction("🔕  " + tr(c, "Ce qu'elle me dit…"), c.fenetre_muets))
     if hasattr(c, "open_tips"):
         fixed.append(m.addAction("💡  " + tr(c, "Trucs et astuces"), c.open_tips))
     if hasattr(c, "open_look"):

@@ -253,6 +253,11 @@ def compose(base, patch):
 
 def simple_cutout(img, tol=26):
     """Détourage simple d'une image à fond uni (le fond touchant les bords devient transparent)."""
+    try:                                      # la version du carnet : fond en dégradé, bords adoucis, trous
+        import dessin
+        return dessin.detourer(img, tol=max(28.0, float(tol))).convertToFormat(QImage.Format.Format_RGBA8888)
+    except Exception:
+        pass
     np = _np()
     img = img.convertToFormat(QImage.Format.Format_RGBA8888)
     if np is None:

@@ -5,7 +5,7 @@ import random
 import re
 import unicodedata
 
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
+from PyQt6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
                              QLabel, QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QVBoxLayout,
@@ -133,6 +133,67 @@ REPAS_PLUS = [
      "Le petit plaisir de la semaine, fait maison."),
 ]
 
+# recettes pour le sport : avant (énergie), après (récupération), collation
+REPAS_SPORT = [
+    ("Bowl poulet, riz et brocoli", 25, "≈ 2,5 €", ["150 g de blanc de poulet", "80 g de riz", "1 poignée de brocoli",
+                                                    "sauce soja", "graines de sésame"],
+     ["Fais cuire le riz 12 min dans l'eau bouillante salée.",
+      "Fais cuire le brocoli 6 min à la vapeur ou dans l'eau.",
+      "Coupe le poulet en lamelles et fais-le dorer 8 min à la poêle.",
+      "Mets tout dans un bol, ajoute la sauce soja et le sésame."],
+     "Après le sport : des protéines pour les muscles et du riz pour refaire le plein d'énergie."),
+    ("Porridge banane et beurre de cacahuète", 5, "≈ 0,9 €", ["50 g de flocons d'avoine", "200 ml de lait",
+                                                             "1 banane", "1 c. à soupe de beurre de cacahuète"],
+     ["Fais chauffer les flocons et le lait 3 min en remuant.",
+      "Coupe la banane en rondelles.",
+      "Ajoute la banane et le beurre de cacahuète sur le dessus."],
+     "Avant le sport (1 h avant) : de l'énergie qui dure, sans être lourd."),
+    ("Smoothie récup' banane et avoine", 5, "≈ 1 €", ["1 banane", "250 ml de lait", "2 c. à soupe de flocons d'avoine",
+                                                     "1 c. à soupe de fromage blanc"],
+     ["Mets tout dans le blender.", "Mixe 1 min jusqu'à ce que ce soit bien lisse.", "Bois tout de suite."],
+     "Juste après l'effort : se boit vite, et apporte sucres et protéines pour récupérer."),
+    ("Omelette épinards et feta", 10, "≈ 2 €", ["3 œufs", "1 poignée d'épinards", "40 g de feta", "1 tranche de pain complet"],
+     ["Fais tomber les épinards 2 min dans une poêle avec un peu d'huile.",
+      "Verse les œufs battus et émiette la feta dessus.",
+      "Laisse cuire 4 min à feu doux et sers avec le pain."],
+     "Plein de protéines et de fer : parfait après une séance de muscu."),
+    ("Salade de pâtes au thon", 15, "≈ 1,8 €", ["80 g de pâtes complètes", "1 petite boîte de thon", "1 tomate",
+                                                "maïs", "huile d'olive, citron"],
+     ["Fais cuire les pâtes 10 min, puis passe-les sous l'eau froide.",
+      "Coupe la tomate et émiette le thon.",
+      "Mélange tout avec le maïs, l'huile et le citron."],
+     "À emporter à la salle : des glucides pour l'énergie et des protéines pour les muscles."),
+    ("Fromage blanc, fruits et muesli", 3, "≈ 1,2 €", ["150 g de fromage blanc", "1 poignée de fruits rouges",
+                                                       "3 c. à soupe de muesli", "1 c. à café de miel"],
+     ["Verse le fromage blanc dans un bol.", "Ajoute les fruits, le muesli et le miel."],
+     "La collation idéale : des protéines et des fruits, prête en 3 minutes."),
+    ("Patate douce, œufs et avocat", 25, "≈ 2,2 €", ["1 patate douce", "2 œufs", "1/2 avocat", "paprika"],
+     ["Coupe la patate douce en cubes et fais-la cuire 20 min au four à 200 °C avec un peu d'huile et de paprika.",
+      "Fais cuire les œufs 7 min dans l'eau bouillante, puis écale-les.",
+      "Sers avec l'avocat en tranches."],
+     "Des glucides lents, de bonnes graisses et des protéines : un repas complet de sportif."),
+    ("Wok de tofu et légumes", 20, "≈ 2 €", ["150 g de tofu ferme", "légumes surgelés (mélange wok)",
+                                             "1 portion de nouilles", "sauce soja"],
+     ["Coupe le tofu en cubes et fais-le dorer 6 min à la poêle.",
+      "Ajoute les légumes et fais sauter 5 min.",
+      "Ajoute les nouilles cuites et la sauce soja, mélange 2 min."],
+     "Les protéines végétales du tofu, pour récupérer sans viande."),
+    ("Saumon, quinoa et haricots verts", 25, "≈ 3 €", ["1 pavé de saumon", "70 g de quinoa",
+                                                        "1 poignée de haricots verts", "citron"],
+     ["Fais cuire le quinoa 12 min dans l'eau bouillante.",
+      "Fais cuire les haricots verts 8 min à la vapeur.",
+      "Fais cuire le saumon 4 min de chaque côté à la poêle, et ajoute un filet de citron."],
+     "Oméga-3 et protéines complètes : idéal pour bien récupérer."),
+]
+SPORT_NOMS = {r[0] for r in REPAS_SPORT}
+COLLATIONS = {"Porridge banane et beurre de cacahuète", "Smoothie récup' banane et avoine",
+              "Fromage blanc, fruits et muesli"}
+
+
+def sport(r):
+    return r[0] in SPORT_NOMS
+
+
 JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 MOMENTS = [("midi", "Midi"), ("soir", "Soir")]
 _VIANDE = ("poulet", "lardon", "jambon", "boeuf", "bœuf", "steak", "thon", "saumon", "maquereau", "poisson",
@@ -140,11 +201,12 @@ _VIANDE = ("poulet", "lardon", "jambon", "boeuf", "bœuf", "steak", "thon", "sau
 RAYONS = [
     ("🥕 Fruits et légumes", ("carotte", "pomme de terre", "pommes de terre", "poireau", "oignon", "ail", "courgette", "poivron",
                               "tomate", "concombre", "salade", "brocoli", "banane", "citron", "champignon",
-                              "potiron", "courge", "aubergine", "haricots verts", "menthe", "persil", "herbes")),
-    ("🥩 Viande et poisson", ("poulet", "lardon", "jambon", "boeuf", "bœuf", "steak", "poisson", "dinde")),
+                              "potiron", "courge", "aubergine", "haricots verts", "menthe", "persil", "herbes",
+                              "épinard", "epinard", "avocat", "patate douce", "fruits rouges")),
+    ("🥩 Viande et poisson", ("poulet", "lardon", "jambon", "boeuf", "bœuf", "steak", "poisson", "dinde", "pavé de saumon")),
     ("🥫 Conserves", ("thon", "maquereau", "saumon", "boîte", "boite", "coulis", "concassées", "haricots rouges", "pois chiches", "maïs", "mais",
                       "lait de coco")),
-    ("🥛 Frais", ("œuf", "oeuf", "lait", "crème", "creme", "fromage", "beurre", "mozzarella", "parmesan")),
+    ("🥛 Frais", ("œuf", "oeuf", "lait", "crème", "creme", "fromage", "beurre", "mozzarella", "parmesan", "feta", "tofu")),
     ("🧊 Surgelés", ("surgelé", "surgele", "petits pois")),
     ("🍞 Boulangerie", ("pain", "tortilla")),
     ("🛒 Épicerie", ()),
@@ -161,7 +223,9 @@ EMOJI = [("œuf", "🥚"), ("oeuf", "🥚"), ("oignon", "🧅"), ("ail", "🧄")
          ("maïs", "🌽"), ("potiron", "🎃"), ("courge", "🎃"), ("poireau", "🥬"), ("menthe", "🌿"),
          ("persil", "🌿"), ("herbes", "🌿"), ("origan", "🌿"), ("laurier", "🌿"), ("curry", "🌶️"),
          ("cumin", "🌶️"), ("paprika", "🌶️"), ("soja", "🥢"), ("huile", "🫒"), ("vinaigre", "🫗"),
-         ("bouillon", "🍲"), ("cannelle", "🌰")]
+         ("bouillon", "🍲"), ("cannelle", "🌰"), ("épinard", "🥬"), ("feta", "🧀"), ("avocat", "🥑"),
+         ("patate douce", "🍠"), ("tofu", "🧊"), ("quinoa", "🌾"), ("muesli", "🥣"), ("fruits rouges", "🫐"),
+         ("miel", "🍯"), ("cacahuète", "🥜"), ("sésame", "🌰")]
 
 
 def _sa(t):
@@ -176,7 +240,7 @@ def recettes():
     except Exception:
         base = []
     noms = {r[0] for r in base}
-    return [r for r in base + [x for x in REPAS_PLUS if x[0] not in noms] if "petit-déj" not in r[0]]
+    return [r for r in base + [x for x in REPAS_PLUS + REPAS_SPORT if x[0] not in noms] if "petit-déj" not in r[0]]
 
 
 def par_nom(nom):
@@ -267,10 +331,12 @@ def prix(r):
     return float(m.group(1).replace(",", ".")) if m else 0.0
 
 
-def remplir_semaine(vege=False, rapide=False, midi=True, eviter=()):
-    """Un planning de 7 jours sans répéter un plat (tant que c'est possible)."""
-    pool = [r for r in recettes() if (not vege or vegetarien(r)) and (not rapide or r[1] <= 20)] or recettes()
+def remplir_semaine(vege=False, rapide=False, midi=True, eviter=(), sportif=False):
+    """Un planning de 7 jours sans répéter un plat (tant que c'est possible). sportif : surtout des plats sport."""
+    pool = [r for r in recettes() if r[0] not in COLLATIONS and (not vege or vegetarien(r)) and
+            (not rapide or r[1] <= 20)] or [r for r in recettes() if r[0] not in COLLATIONS]
     random.shuffle(pool)
+    pool.sort(key=lambda r: (not sport(r)) if sportif else 0)
     pool.sort(key=lambda r: r[0] in eviter)
     sem, i = {}, 0
     for j in range(7):
@@ -307,6 +373,90 @@ def liste_de_courses(semaine, personnes=1):
         a, n = compte[key]
         out.setdefault(rayon_de(a), []).append((a, n))
     return {nom: out[nom] for nom, _m in RAYONS if nom in out}
+
+
+# ------------------------------------------------------------------ photos des plats (Wikipédia, si internet est permis)
+PHOTO_CHERCHE = {
+    "Omelette aux légumes": "Omelette", "Pâtes à la sauce tomate et thon": "Pâtes sauce tomate",
+    "Dahl de lentilles corail": "Dal (cuisine)", "Riz sauté aux œufs et petits pois": "Riz cantonais",
+    "Soupe de légumes maison": "Soupe de légumes", "Chili sin carne": "Chili con carne",
+    "Wrap poulet-crudités": "Wrap (cuisine)", "Poêlée de pommes de terre, œuf au plat": "Pommes de terre sautées",
+    "Salade de pois chiches": "Salade de pois chiches", "Gratin de courgettes": "Gratin de courgettes",
+    "Croque-monsieur et salade": "Croque-monsieur", "Riz au curry de légumes": "Curry de légumes",
+    "Pain perdu salé": "Pain perdu", "Quesadillas aux haricots": "Quesadilla",
+    "Saumon (ou maquereau) en boîte, riz et brocoli": "Brocoli", "Curry de pois chiches": "Chana masala",
+    "Poêlée de poulet et légumes": "Sauté de poulet", "Pâtes carbonara": "Spaghetti alla carbonara",
+    "Galettes de courgettes": "Beignet de courgette", "Risotto aux champignons": "Risotto aux champignons",
+    "Tortilla espagnole": "Tortilla de patatas", "Velouté de potiron": "Soupe au potiron",
+    "Hachis parmentier": "Hachis parmentier", "Nouilles sautées aux légumes": "Chow mein",
+    "Lentilles vertes aux carottes": "Lentille verte du Puy", "Taboulé": "Taboulé", "Pizza sur tortilla": "Pizza",
+    "Poisson, purée et haricots verts": "Purée de pommes de terre", "Shakshuka": "Chakchouka",
+    "Ratatouille et semoule": "Ratatouille", "Steak haché et potatoes au four": "Steak haché",
+    "Bowl poulet, riz et brocoli": "Poké bowl", "Porridge banane et beurre de cacahuète": "Porridge",
+    "Smoothie récup' banane et avoine": "Smoothie", "Omelette épinards et feta": "Feta",
+    "Salade de pâtes au thon": "Salade de pâtes", "Fromage blanc, fruits et muesli": "Muesli",
+    "Patate douce, œufs et avocat": "Patate douce", "Wok de tofu et légumes": "Tofu",
+    "Saumon, quinoa et haricots verts": "Quinoa",
+}
+UA_WIKI = "Viki/1.0 (compagne de bureau libre ; https://korhyu.com)"
+
+
+def dossier_photos():
+    from pathlib import Path
+    import os
+    d = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "viki" / "plats"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def photo_en_cache(nom):
+    """-> (chemin de l'image, source) si on l'a déjà, (None, "") si on a déjà cherché sans trouver, None sinon."""
+    import json
+    d = dossier_photos()
+    cle = re.sub(r"[^a-z0-9]+", "-", _sa(nom)).strip("-")
+    meta = d / (cle + ".json")
+    if not meta.exists():
+        return None
+    try:
+        m = json.loads(meta.read_text())
+    except Exception:
+        return None
+    if m.get("fichier") and (d / m["fichier"]).exists():
+        return str(d / m["fichier"]), m.get("source", "")
+    return (None, "")
+
+
+def chercher_photo(nom):
+    """Cherche une photo du plat sur Wikipédia (fr), la garde en cache. -> (chemin, source) ou (None, "")."""
+    import json
+    import urllib.parse
+    import urllib.request
+    d = dossier_photos()
+    cle = re.sub(r"[^a-z0-9]+", "-", _sa(nom)).strip("-")
+    terme = PHOTO_CHERCHE.get(nom, nom)
+    url = ("https://fr.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrlimit=3&prop=pageimages"
+           "&piprop=thumbnail&pithumbsize=640&gsrsearch=" + urllib.parse.quote(terme))
+    res = (None, "")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA_WIKI}), timeout=10) as r:
+            pages = (json.load(r).get("query") or {}).get("pages") or {}
+        for pg in sorted(pages.values(), key=lambda x: x.get("index", 99)):
+            th = (pg.get("thumbnail") or {}).get("source")
+            if not th:
+                continue
+            with urllib.request.urlopen(urllib.request.Request(th, headers={"User-Agent": UA_WIKI}), timeout=15) as r:
+                data = r.read(3_000_001)
+            if len(data) > 3_000_000:
+                continue
+            ext = ".png" if th.lower().endswith(".png") else ".jpg"
+            (d / (cle + ext)).write_bytes(data)
+            res = (str(d / (cle + ext)), "Wikipédia — " + pg.get("title", ""))
+            (d / (cle + ".json")).write_text(json.dumps({"fichier": cle + ext, "source": res[1]}))
+            return res
+        (d / (cle + ".json")).write_text(json.dumps({"fichier": "", "source": ""}))
+    except Exception:
+        pass                                              # pas de réseau : on réessaiera une autre fois
+    return res
 
 
 # ------------------------------------------------------------------ petites illustrations des étapes
@@ -455,6 +605,10 @@ def _vider(lay):
             _vider(it.layout())
 
 
+class _Sig(QObject):
+    photo = pyqtSignal(str, str, str)
+
+
 class Cuisine(QWidget):
     def __init__(self, comp, C):
         super().__init__(None, Qt.WindowType.Window)
@@ -468,6 +622,8 @@ class Cuisine(QWidget):
         self.d.setdefault("favoris", [])
         self.recette = None
         self.etape_lue = -1
+        self.sig = _Sig()
+        self.sig.photo.connect(self._photo_arrivee)
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
         self.tabs = QTabWidget()
@@ -504,6 +660,9 @@ class Cuisine(QWidget):
         self.f_vege = QCheckBox(tr("🌱 Végétarien"))
         self.f_vege.toggled.connect(lambda _b: self._filtrer())
         h.addWidget(self.f_vege)
+        self.f_sport = QCheckBox(tr("💪 Sport"))
+        self.f_sport.toggled.connect(lambda _b: self._filtrer())
+        h.addWidget(self.f_sport)
         self.f_fav = QCheckBox(tr("❤️ Favoris"))
         self.f_fav.toggled.connect(lambda _b: self._filtrer())
         h.addWidget(self.f_fav)
@@ -528,6 +687,8 @@ class Cuisine(QWidget):
             rs = [r for r in rs if vegetarien(r)]
         if self.f_fav.isChecked():
             rs = [r for r in rs if r[0] in self.d.get("favoris", [])]
+        if self.f_sport.isChecked():
+            rs = [r for r in rs if sport(r)]
         if mots:
             def score(r):
                 t = _sa(" ".join(r[3]) + " " + " ".join(tr(x) for x in r[3]))
@@ -538,7 +699,7 @@ class Cuisine(QWidget):
         self.choix.clear()
         for r in rs:
             self.choix.addItem(("❤️ " if r[0] in self.d.get("favoris", []) else "") +
-                               ("🌱 " if vegetarien(r) else "") + f"{tr(r[0])} · {r[1]} min", r[0])
+                               ("💪 " if sport(r) else "🌱 " if vegetarien(r) else "") + f"{tr(r[0])} · {r[1]} min", r[0])
         if not rs:
             self.choix.addItem(tr("Aucune recette ne correspond"), "")
         i = self.choix.findData(cur)
@@ -582,7 +743,17 @@ class Cuisine(QWidget):
         t.setFont(f)
         t.setWordWrap(True)
         self.cl.addWidget(t)
-        infos = f"⏱ {mins} min   ·   💶 {budget} " + tr("la part") + (f"   ·   🌱 {tr('végétarien')}" if vegetarien(r) else "")
+        self.l_photo = QLabel()
+        self.l_photo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.l_photo.hide()
+        self.cl.addWidget(self.l_photo)
+        self.l_source = QLabel()
+        self.l_source.setStyleSheet("color:#9b8a93; font-size:8pt;")
+        self.l_source.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.l_source.hide()
+        self.cl.addWidget(self.l_source)
+        self._photo(nom)
+        infos = f"⏱ {mins} min   ·   💶 {budget} " + tr("la part") + (f"   ·   🌱 {tr('végétarien')}" if vegetarien(r) else "") + (f"   ·   💪 {tr('spécial sport')}" if sport(r) else "")
         li = QLabel(infos)
         li.setStyleSheet("color:#6f5563;")
         self.cl.addWidget(li)
@@ -688,6 +859,56 @@ class Cuisine(QWidget):
         except Exception:
             pass
 
+    def _photo(self, nom):
+        """La photo du plat : depuis le cache, sinon (si internet est permis) cherchée sur Wikipédia."""
+        cfg = self.comp.cfg
+        if not cfg.get("cuisine_photos", True):
+            return
+        c = photo_en_cache(nom)
+        if c is not None:
+            if c[0]:
+                self._photo_arrivee(nom, c[0], c[1])
+            return
+        if not cfg.get("web", True):
+            return
+        import threading
+
+        def work():
+            chemin, src = chercher_photo(nom)
+            try:
+                self.sig.photo.emit(nom, chemin or "", src)
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _photo_arrivee(self, nom, chemin, source):
+        if not chemin or not self.recette or self.recette[0] != nom:
+            return
+        pm = QPixmap(chemin)
+        if pm.isNull():
+            return
+        w = max(200, self.corps.width() - 30)
+        pm = pm.scaled(w, 240, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+        if pm.height() > 240 or pm.width() > w:
+            pm = pm.copy((pm.width() - min(w, pm.width())) // 2, (pm.height() - min(240, pm.height())) // 2,
+                         min(w, pm.width()), min(240, pm.height()))
+        arr = QPixmap(pm.size())
+        arr.fill(Qt.GlobalColor.transparent)
+        p = QPainter(arr)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, pm.width(), pm.height()), 14, 14)
+        p.setClipPath(path)
+        p.drawPixmap(0, 0, pm)
+        p.end()
+        try:
+            self.l_photo.setPixmap(arr)
+            self.l_photo.show()
+            self.l_source.setText(tr("Photo :") + " " + source + " " + tr("(illustration, le plat peut varier)"))
+            self.l_source.show()
+        except RuntimeError:
+            pass
+
     def _personnes(self, n):
         self.d["personnes"] = int(n)
         self._save()
@@ -767,7 +988,9 @@ class Cuisine(QWidget):
         self.o_rapide.setChecked(bool(self.d.get("rapide")))
         self.o_midi = QCheckBox(tr("Midi aussi"))
         self.o_midi.setChecked(self.d.get("midi", True))
-        for c in (self.o_vege, self.o_rapide, self.o_midi):
+        self.o_sport = QCheckBox(tr("💪 Sport"))
+        self.o_sport.setChecked(bool(self.d.get("sportif")))
+        for c in (self.o_vege, self.o_rapide, self.o_sport, self.o_midi):
             h.addWidget(c)
         h.addStretch(1)
         v.addLayout(h)
@@ -798,8 +1021,10 @@ class Cuisine(QWidget):
         return w
 
     def remplir_auto(self):
-        self.d.update(vege=self.o_vege.isChecked(), rapide=self.o_rapide.isChecked(), midi=self.o_midi.isChecked())
-        self.d["semaine"] = remplir_semaine(self.d["vege"], self.d["rapide"], self.d["midi"])
+        self.d.update(vege=self.o_vege.isChecked(), rapide=self.o_rapide.isChecked(), midi=self.o_midi.isChecked(),
+                      sportif=self.o_sport.isChecked())
+        self.d["semaine"] = remplir_semaine(self.d["vege"], self.d["rapide"], self.d["midi"],
+                                            sportif=self.d["sportif"])
         self._save()
         self._remplir_semaine_ui()
         self.comp.say("Et voilà ta semaine ! Clique sur un repas pour voir la recette ou le changer.")
@@ -989,7 +1214,11 @@ class Cuisine(QWidget):
         y = max(scr.top() + 30, min(body_b - h, scr.bottom() - h - 8))
         self.move(QPoint(int(x), int(y)))
 
-    def ouvrir(self, recette=None, onglet=0):
+    def ouvrir(self, recette=None, onglet=0, sportif=False):
+        if sportif:
+            self.f_sport.setChecked(True)
+            if recette is None:
+                recette = random.choice([r for r in recettes() if sport(r)])
         if recette is not None:
             self.montrer(recette)
         elif self.recette is None:

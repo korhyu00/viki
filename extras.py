@@ -1461,6 +1461,12 @@ def parse_game(text):
         return "morpion"
     if re.search(r"devine (un|mon|le) nombre|nombre mystere|plus ou moins", t):
         return "nombre"
+    if re.search(r"puissance ?4|puissance quatre|connect ?4", t):
+        return "p4"
+    if re.search(r"\bpendu\b|hangman", t):
+        return "pendu"
+    if re.search(r"\bmemory\b|jeu de (?:paires|memoire)|memo\b", t):
+        return "memory"
     return None
 
 
