@@ -109,10 +109,10 @@ def pc_info():
     if not info["vram"]:
         for card in sorted(Path("/sys/class/drm").glob("card[0-9]")):
             try:
-                v = int((card / "device/mem_info_vram_total").read_text()) / 1024 ** 3
+                v = int((card / "device/mem_info_vram_total").read_text(encoding="utf-8", errors="replace")) / 1024 ** 3
                 if v > info["vram"]:
                     info["vram"] = round(v, 1)
-                    info["gpu"] = "Carte AMD" if "0x1002" in (card / "device/vendor").read_text() else "Carte graphique"
+                    info["gpu"] = "Carte AMD" if "0x1002" in (card / "device/vendor").read_text(encoding="utf-8", errors="replace") else "Carte graphique"
             except Exception:
                 continue
         if info["vram"] and shutil.which("lspci"):
@@ -135,7 +135,7 @@ def pc_info():
         except Exception:
             pass
     try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
             if line.startswith("MemTotal:"):
                 info["ram"] = round(int(line.split()[1]) / 1024 ** 2)
     except Exception:
@@ -302,7 +302,7 @@ def kfd_gpus(base="/sys/class/kfd/kfd/topology/nodes"):
     i = 0
     for n in nodes:
         try:
-            props = dict(l.split()[:2] for l in (n / "properties").read_text().splitlines() if len(l.split()) >= 2)
+            props = dict(l.split()[:2] for l in (n / "properties").read_text(encoding="utf-8", errors="replace").splitlines() if len(l.split()) >= 2)
             ver = int(props.get("gfx_target_version", "0"))
             if not ver or int(props.get("simd_count", "0")) == 0:
                 continue
@@ -311,7 +311,7 @@ def kfd_gpus(base="/sys/class/kfd/kfd/topology/nodes"):
             size = 0
             for mb in (n / "mem_banks").glob("*/properties"):
                 try:
-                    p2 = dict(l.split()[:2] for l in mb.read_text().splitlines() if len(l.split()) >= 2)
+                    p2 = dict(l.split()[:2] for l in mb.read_text(encoding="utf-8", errors="replace").splitlines() if len(l.split()) >= 2)
                     size = max(size, int(p2.get("size_in_bytes", "0")))
                 except Exception:
                     pass
@@ -319,7 +319,7 @@ def kfd_gpus(base="/sys/class/kfd/kfd/topology/nodes"):
             minor_r = props.get("drm_render_minor")
             if minor_r:
                 try:
-                    nom = (Path(f"/sys/class/drm/renderD{minor_r}/device/product_name").read_text().strip())
+                    nom = (Path(f"/sys/class/drm/renderD{minor_r}/device/product_name").read_text(encoding="utf-8", errors="replace").strip())
                 except Exception:
                     pass
             out.append({"i": i, "nom": nom or f"AMD {arch}", "arch": arch, "go": round(size / 2 ** 30, 1),
@@ -346,7 +346,7 @@ def _override_for(arch):
 def gpu_env(force_override=False):
     """Variables d'environnement pour faire tourner le moteur sur la bonne carte AMD."""
     try:
-        cache = json.loads(Path(GPU_FILE).read_text())
+        cache = json.loads(Path(GPU_FILE).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         cache = {}
     if not cache.get("gpus"):
@@ -371,7 +371,7 @@ def gpu_env(force_override=False):
         cache["override"] = ov
         log(f"Carte {best['nom']} ({arch}) : je la fais passer pour {ov} (HSA_OVERRIDE_GFX_VERSION).")
     try:
-        Path(GPU_FILE).write_text(json.dumps(cache))
+        Path(GPU_FILE).write_text(json.dumps(cache), encoding="utf-8")
     except Exception:
         pass
     return env, cache
@@ -411,7 +411,7 @@ def start_comfy(vram=0.0, force_override=False):
     base = [str(py), "main.py", "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch",
             "--preview-method", "auto"]
     try:
-        cache = json.loads(Path(GPU_FILE).read_text())
+        cache = json.loads(Path(GPU_FILE).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         cache = {}
     tries = []
@@ -437,7 +437,7 @@ def start_comfy(vram=0.0, force_override=False):
                 if mode == "compat":
                     cache["override"] = extra.get("HSA_OVERRIDE_GFX_VERSION")
                 try:
-                    Path(GPU_FILE).write_text(json.dumps(cache))
+                    Path(GPU_FILE).write_text(json.dumps(cache), encoding="utf-8")
                 except Exception:
                     pass
             if mode == "cpu" and vram:
@@ -628,7 +628,7 @@ class Res:
 
     def _cpu(self):
         try:
-            v = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:8]]
+            v = [int(x) for x in Path("/proc/stat").read_text(encoding="utf-8", errors="replace").splitlines()[0].split()[1:8]]
             idle, tot = v[3] + v[4], sum(v)
             p = self.cpu_prev
             self.cpu_prev = (idle, tot)
@@ -641,7 +641,7 @@ class Res:
     def sample(self):
         r = {"cpu": self._cpu()}
         try:
-            mi = {l.split(":")[0]: int(l.split()[1]) for l in Path("/proc/meminfo").read_text().splitlines()}
+            mi = {l.split(":")[0]: int(l.split()[1]) for l in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines()}
             r["ram"], r["ram_tot"] = round((mi["MemTotal"] - mi["MemAvailable"]) / 2 ** 20, 1), round(mi["MemTotal"] / 2 ** 20)
         except Exception:
             pass
@@ -658,7 +658,7 @@ class Res:
         for card in Path("/sys/class/drm").glob("card[0-9]"):
             dev = card / "device"
             try:
-                tot = int((dev / "mem_info_vram_total").read_text())
+                tot = int((dev / "mem_info_vram_total").read_text(encoding="utf-8", errors="replace"))
                 if best is None or tot > best[1]:
                     best = (dev, tot)
             except Exception:
@@ -666,18 +666,18 @@ class Res:
         if best:
             dev, tot = best
             try:
-                r["gpu"] = int((dev / "gpu_busy_percent").read_text())
+                r["gpu"] = int((dev / "gpu_busy_percent").read_text(encoding="utf-8", errors="replace"))
             except Exception:
                 pass
             try:
-                r["vram"], r["vram_tot"] = round(int((dev / "mem_info_vram_used").read_text()) / 2 ** 30, 1), \
+                r["vram"], r["vram_tot"] = round(int((dev / "mem_info_vram_used").read_text(encoding="utf-8", errors="replace")) / 2 ** 30, 1), \
                     round(tot / 2 ** 30, 1)
             except Exception:
                 pass
             for hw in dev.glob("hwmon/hwmon*"):
                 for name in ("temp2_input", "temp1_input"):
                     try:
-                        r["temp"] = round(int((hw / name).read_text()) / 1000)
+                        r["temp"] = round(int((hw / name).read_text(encoding="utf-8", errors="replace")) / 1000)
                         break
                     except Exception:
                         continue
@@ -1471,7 +1471,7 @@ class Atelier(QWidget):
             a, e = read_log()
             gpu = ""
             try:
-                gpu = Path(GPU_FILE).read_text()
+                gpu = Path(GPU_FILE).read_text(encoding="utf-8", errors="replace")
             except Exception:
                 pass
             txt = ("=== Atelier ===\n" + (a.strip() or "(rien pour l'instant)") + "\n\n=== Carte graphique vue par le "
@@ -1483,7 +1483,7 @@ class Atelier(QWidget):
         row = QHBoxLayout()
         for txt, fn in (("🔄 Actualiser", load), ("📋 Copier", lambda: (QApplication.clipboard().setText(t.toPlainText()),
                                                                        self.status.setText("Journal copié."))),
-                        ("🗑 Effacer", lambda: (Path(LOG_FILE).write_text("") if LOG_FILE else None, load())),
+                        ("🗑 Effacer", lambda: (Path(LOG_FILE).write_text("", encoding="utf-8") if LOG_FILE else None, load())),
                         ("📂 Dossier", lambda: self.comp._open_path(Path(LOG_FILE).parent) if LOG_FILE else None)):
             b = QPushButton(txt)
             b.clicked.connect(fn)

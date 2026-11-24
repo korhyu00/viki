@@ -20,6 +20,12 @@ except Exception:
     securite = None
 
 IS_WIN = os.name == "nt"
+WO = None
+if IS_WIN:
+    try:
+        import windows_outils as WO               # 🪟 les équivalents Windows (PowerShell, netstat, winget…)
+    except Exception:
+        WO = None
 
 
 def _run(cmd, timeout=8):
@@ -131,6 +137,22 @@ TOOLS = [
          post=["sudo freshclam"], desc="Antivirus libre : utile pour vérifier des fichiers reçus (surtout pour "
                                        "Windows). Sous Linux, les mises à jour comptent bien plus."),
 ]
+# sous Windows : l'identifiant winget de chaque outil (absent = pas pour Windows : Windows a déjà l'équivalent)
+WINGET = {"librewolf": "LibreWolf.LibreWolf", "mullvadb": "MullvadVPN.MullvadBrowser", "torbrowser": "TorProject.TorBrowser",
+          "brave": "Brave.Brave", "opensnitch": "Henry++.simplewall", "keepassxc": "KeePassXCTeam.KeePassXC",
+          "bitwarden": "Bitwarden.Bitwarden", "cryptomator": "Cryptomator.Cryptomator", "veracrypt": "IDRIX.VeraCrypt",
+          "signal": "OpenWhisperSystems.Signal", "gpg4win": "GnuPG.Gpg4win"}
+WIN_NOMS = {"opensnitch": ("simplewall", "Pare-feu « appli par appli » : il te demande quand un programme veut se "
+                                         "connecter à internet.")}
+WIN_CHERCHE = {"librewolf": ["librewolf"], "mullvadb": ["mullvad browser"], "torbrowser": ["tor browser"],
+               "brave": ["brave"], "opensnitch": ["simplewall"], "keepassxc": ["keepassxc"], "bitwarden": ["bitwarden"],
+               "cryptomator": ["cryptomator"], "veracrypt": ["veracrypt"], "signal": ["signal"], "gpg4win": ["gpg4win"]}
+if IS_WIN:
+    TOOLS.append(dict(id="gpg4win", cat="donnees", ico="🔏", nom="Gpg4win (GnuPG)", flat="", check=["gpg"], pkgs={},
+                      desc="Le chiffrement GnuPG pour Windows : il sert à la « Sauvegarde chiffrée » de Viki."))
+    for _t in TOOLS:
+        if _t["id"] in WIN_NOMS:
+            _t["nom"], _t["desc"] = WIN_NOMS[_t["id"]]
 CATS = [("nav", "🌐 Navigateurs"), ("reseau", "🧱 Réseau, Tor et pare-feu"), ("donnees", "🔐 Mots de passe, "
                                                                                        "sauvegardes, messages")]
 
@@ -151,11 +173,15 @@ EXTENSIONS = [  # (nom, description, firefox, chrome)
 
 
 def tool_installed(t):
+    if IS_WIN and WO:
+        return WO.est_installe(*WIN_CHERCHE.get(t["id"], [t["nom"]]))
     return any(shutil.which(x) for x in t["check"]) or (t.get("flat") and flatpak_has(t["flat"]))
 
 
 def install_cmds(t):
     """Commandes à lancer dans le terminal pour installer (et activer) l'outil, ou [] si impossible ici."""
+    if IS_WIN:
+        return [WO.winget_installer(WINGET[t["id"]])] if WO and t["id"] in WINGET else []
     if paquets:
         return paquets.commandes(t.get("pkgs") or {}, t.get("flat", ""), t.get("post"), t.get("post_dnf"))[0]
     pm = pkg_manager()
@@ -186,6 +212,16 @@ RISQUES = set(securite.RISQUES) if securite else set()
 
 def listening_ports():
     """-> [{proto, addr, port, prog, pid, expose, nom, risque}]"""
+    if IS_WIN and WO:
+        res, seen = [], set()
+        for p in WO.ports():
+            local = p["addr"].startswith("127.") or p["addr"] in ("::1",)
+            key = (p["proto"], p["port"], local)
+            if key in seen:
+                continue
+            seen.add(key)
+            res.append(dict(p, expose=not local, nom=PORTS.get(p["port"], ""), risque=p["port"] in RISQUES and not local))
+        return sorted(res, key=lambda r: (not r["expose"], not r["risque"], r["port"]))
     code, out = _run(["ss", "-tulnpH"], 8)
     res = []
     if code != 0:
@@ -213,6 +249,8 @@ def listening_ports():
 
 def upnp_mappings():
     """Redirections ouvertes sur la box par UPnP -> (ip_externe, [{proto, ext, int_ip, int_port, desc}]) ou None."""
+    if IS_WIN and WO:
+        return WO.upnp()
     if not shutil.which("upnpc"):
         return None
     code, out = _run(["upnpc", "-l"], 15)
@@ -227,12 +265,17 @@ def upnp_mappings():
 
 
 def gateway():
+    if IS_WIN and WO:
+        return WO.passerelle()
     code, out = _run(["ip", "route", "show", "default"], 4)
     m = re.search(r"default via ([\d.]+)", out)
     return m.group(1) if m else ""
 
 
 def firewall_state():
+    if IS_WIN and WO:
+        on, _coupes = WO.pare_feu()
+        return on, "Pare-feu Windows"                         # None : je n'ai pas pu vérifier
     for unit, nom in (("ufw", "ufw"), ("firewalld", "firewalld"), ("nftables", "nftables")):
         if _run(["systemctl", "is-active", unit], 4)[1].strip() == "active":
             return True, nom
@@ -258,6 +301,8 @@ DNS_FILE = "/etc/systemd/resolved.conf.d/viki-dns.conf"
 
 def dns_status():
     """-> (texte lisible, chiffré ?)"""
+    if IS_WIN and WO:
+        return WO.dns_etat()
     if shutil.which("resolvectl"):
         code, out = _run(["resolvectl", "status"], 6)
         if code == 0:
@@ -268,7 +313,7 @@ def dns_status():
                     "Serveurs : ceux de ta box") + ("\nChiffré (DNS over TLS) : oui" if dot else
                                                      "\nChiffré : non") + ("\n(Réglé par Viki)" if mine else ""), dot
     try:
-        ns = re.findall(r"^nameserver\s+(\S+)", Path("/etc/resolv.conf").read_text(), re.M)
+        ns = re.findall(r"^nameserver\s+(\S+)", Path("/etc/resolv.conf").read_text(encoding="utf-8", errors="replace"), re.M)
         return "Serveurs : " + ", ".join(ns), False
     except Exception:
         return "Je n'ai pas pu lire tes réglages DNS.", False
@@ -276,6 +321,9 @@ def dns_status():
 
 def dns_cmds(dns_id):
     d = next(x for x in DNS if x[0] == dns_id)
+    if IS_WIN and WO:
+        ips = [a.split("#")[0] for a in d[2].split() if "." in a.split("#")[0]]
+        return WO.dns_commandes(ips, WO.DOH.get(dns_id, ""))
     conf = f"[Resolve]\\nDNS={d[2]}\\nDNSOverTLS=yes\\nDomains=~.\\n"
     return ["sudo mkdir -p /etc/systemd/resolved.conf.d",
             f"printf '{conf}' | sudo tee {DNS_FILE} >/dev/null",
@@ -286,6 +334,8 @@ def dns_cmds(dns_id):
 
 
 def dns_reset_cmds():
+    if IS_WIN and WO:
+        return WO.dns_retour()
     return [f"sudo rm -f {DNS_FILE}", "sudo systemctl restart systemd-resolved", "resolvectl status | head -20"]
 
 
@@ -324,6 +374,9 @@ class PrivacyWindow(QWidget):
         self.sig.done.connect(lambda fn, r: fn(r))
         lay = QVBoxLayout(self)
         info = self._lab("Tout est en option. Rien n'est installé ni modifié sans ton clic : les commandes s'ouvrent "
+                         "dans une fenêtre PowerShell, et Windows te demande la permission si besoin (jamais Viki)."
+                         if IS_WIN else
+                         "Tout est en option. Rien n'est installé ni modifié sans ton clic : les commandes s'ouvrent "
                          "dans un terminal où ton mot de passe est demandé (jamais par Viki).", "aide")
         lay.addWidget(info)
         self.tabs = QTabWidget()
@@ -377,10 +430,14 @@ class PrivacyWindow(QWidget):
         sc.setWidget(box)
         return sc, lay
 
-    def terminal(self, cmds, titre="Viki"):
+    def terminal(self, cmds, titre="Viki", admin=False):
         """Lance les commandes dans un terminal visible (et arrête au premier échec)."""
         if IS_WIN:
-            return self.comp.say("Cette action n'existe que sous Linux pour l'instant.")
+            if WO and WO.terminal(cmds, titre, admin=admin):
+                return self.comp.say("Je t'ai ouvert une fenêtre PowerShell : tout se passe là"
+                                     + (", Windows te demande d'abord la permission." if admin else "."))
+            QApplication.clipboard().setText("\n".join(cmds))
+            return self.comp.say("Je n'ai pas pu ouvrir PowerShell. Les commandes sont copiées.")
         script = "echo '── " + titre.replace("'", "") + " ──'; echo; " + " && ".join(
             f"echo '$ {c.replace(chr(39), chr(34))}' && {c}" for c in cmds) + \
             "; echo; read -p 'Entrée pour fermer…'"
@@ -437,7 +494,8 @@ class PrivacyWindow(QWidget):
         self.fw = self._lab("")
         row.addWidget(self.fw, 1)
         self.b_fw = QPushButton("🧱 Activer un pare-feu")
-        self.b_fw.clicked.connect(lambda: self.install(next(t for t in TOOLS if t["id"] == "ufw")))
+        self.b_fw.clicked.connect(lambda: WO.ouvrir("windowsdefender://network") if IS_WIN and WO else
+                                  self.install(next(t for t in TOOLS if t["id"] == "ufw")))
         row.addWidget(self.b_fw)
         v.addLayout(row)
         sc, self.p_lay = self._scroll()
@@ -465,8 +523,9 @@ class PrivacyWindow(QWidget):
             self.p_lay.addWidget(self._lab(f"Erreur : {r}"))
             return
         ports, upnp, (fw_on, fw_name), gw = r
-        self.fw.setText(f"✅ Pare-feu actif ({fw_name})" if fw_on else "⚠️ Aucun pare-feu actif")
-        self.b_fw.setVisible(not fw_on)
+        self.fw.setText(f"✅ Pare-feu actif ({fw_name})" if fw_on else "❔ Je n'ai pas pu vérifier le pare-feu"
+                        if fw_on is None else "⚠️ Aucun pare-feu actif")
+        self.b_fw.setVisible(fw_on is False)
         expo = [p for p in ports if p["expose"]]
         loc = [p for p in ports if not p["expose"]]
         c = self._card(self.p_lay)
@@ -485,7 +544,9 @@ class PrivacyWindow(QWidget):
         c.addWidget(self._lab("📡 Redirections sur ta box (UPnP)", "titre"))
         c.addWidget(self._lab("Des applis (jeux, torrent, consoles…) peuvent demander à ta box d'ouvrir un port vers "
                               "internet. Celles-ci sont visibles depuis l'extérieur.", "aide"))
-        if upnp is None:
+        if upnp is None and IS_WIN:
+            c.addWidget(self._lab("Je n'ai pas pu interroger ta box (UPnP désactivé sur la box, ou réseau sans box)."))
+        elif upnp is None:
             row = QHBoxLayout()
             row.addWidget(self._lab("Pour les voir, il me faut l'outil miniupnpc."), 1)
             b = QPushButton("📥 Installer miniupnpc")
@@ -502,7 +563,8 @@ class PrivacyWindow(QWidget):
                 row.addWidget(self._lab(f"⚠️ {m['proto']} {m['ext']} → {m['int_ip']}:{m['int_port']}  "
                                         f"« {m['desc'] or 'sans nom'} »"), 1)
                 b = QPushButton("Fermer")
-                b.clicked.connect(lambda _=False, m=m: (_run(["upnpc", "-d", str(m["ext"]), m["proto"]], 10),
+                b.clicked.connect(lambda _=False, m=m: ((WO.upnp_fermer(m["ext"], m["proto"]) if IS_WIN and WO else
+                                                         _run(["upnpc", "-d", str(m["ext"]), m["proto"]], 10)),
                                                         self._load_ports()))
                 row.addWidget(b)
                 c.addLayout(row)
@@ -523,7 +585,7 @@ class PrivacyWindow(QWidget):
                     1)
         if p["pid"]:
             try:
-                mine = Path(f"/proc/{p['pid']}").stat().st_uid == os.getuid()
+                mine = True if IS_WIN else Path(f"/proc/{p['pid']}").stat().st_uid == os.getuid()
             except Exception:
                 mine = False
             if mine:
@@ -537,6 +599,11 @@ class PrivacyWindow(QWidget):
         c.addLayout(row)
 
     def _kill(self, pid, name):
+        if IS_WIN and WO:
+            ok, msg = WO.arreter(pid)
+            self.comp.say(f"J'ai arrêté {name}." if ok else f"Je n'ai pas pu arrêter {name} (c'est peut-être un "
+                          "service de Windows : il faut les droits d'administrateur).")
+            return self._load_ports()
         try:
             os.kill(pid, 15)
             self.comp.say(f"J'ai arrêté {name}.")
@@ -554,16 +621,22 @@ class PrivacyWindow(QWidget):
     # ---------- outils
     def _tab_outils(self):
         sc, lay = self._scroll()
-        pm = pkg_manager()
-        nom = paquets.nom_systeme() if paquets else "Linux"
-        via = (paquets.NOMS.get(pm, pm) if paquets else pm) or ""
-        lay.addWidget(self._lab(f"💻 {nom} · installation par {via}{' et Flatpak' if via and pm else ''}"
-                                f"{' (système immuable : Flatpak en priorité)' if paquets and paquets.immuable() else ''}. "
-                                "Clique sur « Installer » : un terminal s'ouvre et montre chaque commande.", "aide"))
+        if IS_WIN:
+            lay.addWidget(self._lab(f"💻 {WO.version_windows() if WO else 'Windows'} · installation par winget (le "
+                                    "gestionnaire d'applications de Windows). Clique sur « Installer » : une fenêtre "
+                                    "PowerShell s'ouvre et montre la commande. Le pare-feu et l'antivirus sont déjà "
+                                    "dans Windows (Sécurité Windows).", "aide"))
+        else:
+            pm = pkg_manager()
+            nom = paquets.nom_systeme() if paquets else "Linux"
+            via = (paquets.NOMS.get(pm, pm) if paquets else pm) or ""
+            lay.addWidget(self._lab(f"💻 {nom} · installation par {via}{' et Flatpak' if via and pm else ''}"
+                                    f"{' (système immuable : Flatpak en priorité)' if paquets and paquets.immuable() else ''}. "
+                                    "Clique sur « Installer » : un terminal s'ouvre et montre chaque commande.", "aide"))
         self.tool_btns = {}
         for key, titre in CATS:
             lay.addWidget(self._lab(titre, "titre"))
-            for t in [x for x in TOOLS if x["cat"] == key]:
+            for t in [x for x in TOOLS if x["cat"] == key and (not IS_WIN or x["id"] in WINGET)]:
                 c = self._card(lay)
                 row = QHBoxLayout()
                 row.addWidget(self._lab(f"<b>{t['ico']} {t['nom']}</b>"), 1)
@@ -586,7 +659,7 @@ class PrivacyWindow(QWidget):
                 row.addWidget(b)
             c.addLayout(row)
         lay.addStretch(1)
-        self._bg(lambda: {t["id"]: tool_installed(t) for t in TOOLS}, self._tools_state)
+        self._bg(lambda: {t["id"]: tool_installed(t) for t in TOOLS if t["id"] in self.tool_btns}, self._tools_state)
         return sc
 
     def _tools_state(self, st):
@@ -602,7 +675,7 @@ class PrivacyWindow(QWidget):
     def install(self, t):
         cmds = install_cmds(t)
         note = paquets.commandes(t.get("pkgs") or {}, t.get("flat", ""), t.get("post"), t.get("post_dnf"))[1] \
-            if paquets else ""
+            if paquets and not IS_WIN else ""
         if not cmds:
             return self.comp.say(note or f"Je ne sais pas installer {t['nom']} sur ton système. Cherche-le sur "
                                          "flathub.org.")
@@ -627,17 +700,20 @@ class PrivacyWindow(QWidget):
         row.addWidget(self.dns_combo, 1)
         b = QPushButton("✅ Utiliser ce DNS chiffré")
         b.setObjectName("principal")
-        b.clicked.connect(lambda: self.terminal(dns_cmds(self.dns_combo.currentData()), "DNS chiffré"))
+        b.clicked.connect(lambda: self.terminal(dns_cmds(self.dns_combo.currentData()), "DNS chiffré", admin=IS_WIN))
         row.addWidget(b)
         b = QPushButton("↩️ Revenir comme avant")
-        b.clicked.connect(lambda: self.terminal(dns_reset_cmds(), "DNS par défaut"))
+        b.clicked.connect(lambda: self.terminal(dns_reset_cmds(), "DNS par défaut", admin=IS_WIN))
         row.addWidget(b)
         c.addLayout(row)
         self.dns_desc = self._lab("", "aide")
         c.addWidget(self.dns_desc)
         self.dns_combo.currentIndexChanged.connect(lambda i: self.dns_desc.setText(DNS[i][3]))
         self.dns_desc.setText(DNS[0][3])
-        c.addWidget(self._lab("Utilise systemd-resolved (le standard sur Arch, Fedora, Ubuntu). Si un site ne marche "
+        c.addWidget(self._lab("Règle les cartes réseau de Windows (Windows te demande la permission). Le chiffrement "
+                              "(DNS over HTTPS) se fait sous Windows 11 ; sous Windows 10, seul le serveur change. "
+                              "Si un site ne marche plus, « Revenir comme avant » annule tout." if IS_WIN else
+                              "Utilise systemd-resolved (le standard sur Arch, Fedora, Ubuntu). Si un site ne marche "
                               "plus, « Revenir comme avant » annule tout.", "aide"))
         b = QPushButton("🔄 Vérifier mes DNS")
         b.clicked.connect(self._load_dns)
@@ -656,13 +732,18 @@ class PrivacyWindow(QWidget):
         b.clicked.connect(self._save_proxy)
         row.addWidget(b)
         c.addLayout(row)
-        b = QPushButton("⚙️ Proxy de tout le système (réglages KDE)")
-        b.clicked.connect(lambda: subprocess.Popen(["systemsettings", "kcm_proxy"], env=_env(), start_new_session=True)
-                          if shutil.which("systemsettings") else self.comp.say("Ouvre les réglages réseau de ton bureau."))
-        c.addWidget(b)
-        tor_on = _run(["systemctl", "is-active", "tor"], 4)[1].strip() == "active"
-        c.addWidget(self._lab("🧅 Service Tor : " + ("actif — proxy SOCKS sur 127.0.0.1:9050" if tor_on else
-                                                     "pas actif (onglet « Outils » → Tor)")))
+        if IS_WIN:
+            b = QPushButton("⚙️ Proxy de tout le système (Paramètres de Windows)")
+            b.clicked.connect(lambda: WO.ouvrir("ms-settings:network-proxy") if WO else None)
+            c.addWidget(b)
+        else:
+            b = QPushButton("⚙️ Proxy de tout le système (réglages KDE)")
+            b.clicked.connect(lambda: subprocess.Popen(["systemsettings", "kcm_proxy"], env=_env(), start_new_session=True)
+                              if shutil.which("systemsettings") else self.comp.say("Ouvre les réglages réseau de ton bureau."))
+            c.addWidget(b)
+            tor_on = _run(["systemctl", "is-active", "tor"], 4)[1].strip() == "active"
+            c.addWidget(self._lab("🧅 Service Tor : " + ("actif — proxy SOCKS sur 127.0.0.1:9050" if tor_on else
+                                                         "pas actif (onglet « Outils » → Tor)")))
         lay.addStretch(1)
         self._load_dns()
         return sc
@@ -706,7 +787,9 @@ class PrivacyWindow(QWidget):
         b.setObjectName("principal")
         b.clicked.connect(self._backup)
         c.addWidget(b)
-        c.addWidget(self._lab("Astuce : range-la sur un disque externe ou dans ton cloud. Pour des sauvegardes "
+        c.addWidget(self._lab("Astuce : range-la sur un disque externe ou dans ton cloud. Pour un coffre chiffré dans "
+                              "ton cloud, installe Cryptomator (onglet « Outils »)." if IS_WIN else
+                              "Astuce : range-la sur un disque externe ou dans ton cloud. Pour des sauvegardes "
                               "automatiques et chiffrées, installe Pika Backup ou Vorta (onglet « Outils »).", "aide"))
         c = self._card(lay)
         c.addWidget(self._lab("🔓 Récupérer une sauvegarde", "titre"))
@@ -725,6 +808,22 @@ class PrivacyWindow(QWidget):
         src, dst = Path(self.src.text().strip()), Path(self.dst.text().strip())
         if not src.is_dir() or not dst.is_dir():
             return self.comp.say("Choisis un dossier à sauvegarder et un dossier où la ranger.")
+        if IS_WIN:
+            g = WO.gpg() if WO else ""
+            if not g:
+                return self.comp.ask_yes("Pour chiffrer, il me faut Gpg4win (GnuPG pour Windows, gratuit). Je l'installe "
+                                         "avec winget ? (oui / non)",
+                                         lambda: self.terminal([WO.winget_installer("GnuPG.Gpg4win")], "Installer Gpg4win"))
+            import datetime as _dt
+            out = dst / f"{src.name}-{_dt.date.today().isoformat()}.zip.gpg"
+            q = lambda x: "'" + str(x).replace("'", "''") + "'"
+            tout = q(str(src) + "\\*")
+            return self.terminal(["$z = Join-Path $env:TEMP 'viki-sauvegarde.zip'",
+                                  f"Compress-Archive -Path {tout} -DestinationPath $z -Force",
+                                  f"& {q(g)} --symmetric --cipher-algo AES256 -o {q(out)} $z",
+                                  "Remove-Item $z -Force",
+                                  f"Write-Host ('Sauvegarde chiffrée : ' + {q(out)}) -ForegroundColor Green"],
+                                 "Sauvegarde chiffrée")
         if not shutil.which("gpg"):
             return self.comp.say("Il me faut GnuPG (gpg). Installe-le : " +
                                  (paquets.texte_installer({"pacman": ["gnupg"], "apt": ["gnupg"], "dnf": ["gnupg2"],
@@ -739,6 +838,16 @@ class PrivacyWindow(QWidget):
         if not f:
             return
         d = QFileDialog.getExistingDirectory(self, "Où la déchiffrer ?", str(Path(f).parent))
+        if d and IS_WIN:
+            g = WO.gpg() if WO else ""
+            if not g:
+                return self.comp.say("Il me faut Gpg4win pour la déchiffrer (onglet « Outils »).")
+            q = lambda x: "'" + str(x).replace("'", "''") + "'"
+            return self.terminal(["$z = Join-Path $env:TEMP 'viki-recup.zip'",
+                                  f"& {q(g)} -o $z -d {q(f)}",
+                                  f"Expand-Archive -Path $z -DestinationPath {q(d)} -Force",
+                                  "Remove-Item $z -Force", f"Write-Host ('Récupérée dans ' + {q(d)}) -ForegroundColor Green"],
+                                 "Récupérer une sauvegarde")
         if d:
             self.terminal([f"cd {shlex.quote(d)}", f"gpg -d {shlex.quote(f)} | tar -xzf -",
                            "echo '✔ Récupérée dans ' $(pwd)"], "Récupérer une sauvegarde")

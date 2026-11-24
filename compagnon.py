@@ -164,6 +164,12 @@ try:
 except Exception as _e:
     print("guide.py :", _e, file=sys.stderr)
     guide = None
+curseur_windows = None
+if IS_WIN:
+    try:
+        import curseur_windows                     # 🖱️ le mode curseur sous Windows
+    except Exception as _e:
+        print("curseur_windows.py :", _e, file=sys.stderr)
 try:
     import decouvrir
 except Exception as _e:
@@ -519,6 +525,8 @@ DEFAULT_CONFIG = {
     "phrases_ia": True,           # reformule ses phrases selon le moment (IA locale)
     "souvenirs_auto": True,       # propose de retenir ce que tu lui dis de toi (avec ton accord)
     "routines": True,             # apprend tes heures de départ / retour
+    "roue_deux_boutons": True,    # 🎡 la roue s'ouvre avec les deux boutons de la souris (dès le départ)
+    "roue_raccourci_win": True,   # 🎡 Windows : Win+Alt+Espace ouvre la roue (dès le départ)
     "fatigue": True,              # longue session sans pause, même erreur copiée plusieurs fois
     "astuce_jour": True,          # une astuce d'utilisation par jour
     "clip_histo": True,           # garde tes dernières copies en mémoire vive (jamais sur le disque)
@@ -860,7 +868,7 @@ def date_txt(d=None):
 def load_phrases(char_dir):
     data = {k: list(v) for k, v in DEFAULT_PHRASES.items()}
     try:
-        user = json.loads((Path(char_dir) / "phrases.json").read_text())
+        user = json.loads((Path(char_dir) / "phrases.json").read_text(encoding="utf-8", errors="replace"))
         for k, v in user.items():
             if k in data and isinstance(v, list) and v:
                 data[k] = [str(x) for x in v]
@@ -870,7 +878,7 @@ def load_phrases(char_dir):
 
 
 def save_phrases(char_dir, data):
-    (Path(char_dir) / "phrases.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    (Path(char_dir) / "phrases.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def greeting_key():
@@ -919,9 +927,13 @@ QUALITY_NAMES = {4: "ultra (60 images/s)", 3: "élevée", 2: "normale", 1: "lég
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
     try:
-        cfg.update(json.loads(CONFIG_FILE.read_text()))
+        cfg.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8", errors="replace")))
     except Exception:
         pass
+    if not cfg.get("roue_v1"):                 # 🎡 la roue est maintenant active par défaut (une fois)
+        cfg["roue_v1"] = True
+        cfg["roue_deux_boutons"] = True
+        cfg["roue_raccourci_win"] = True
     if not cfg.get("perf_v2"):                 # passage au mode automatique (une seule fois)
         cfg["perf_v2"] = True
         if cfg.get("perf") == "equilibre":
@@ -974,7 +986,7 @@ def load_config():
 def save_config(cfg):
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         print("Impossible d'enregistrer la config :", e, file=sys.stderr)
 
@@ -1108,7 +1120,7 @@ def natural_dirs(kind="naturelle"):
     e = NAT_ENGINES[kind]
     out = []
     try:
-        d = json.loads((BASE_CONFIG_DIR / e["dossier"]).read_text()).get("dossier", "")
+        d = json.loads((BASE_CONFIG_DIR / e["dossier"]).read_text(encoding="utf-8", errors="replace")).get("dossier", "")
         if d:
             out.append(Path(d))
     except Exception:
@@ -1175,7 +1187,7 @@ HF_TOKEN_FILE = BASE_CONFIG_DIR / "hf_token"      # jeton Hugging Face (voix lé
 
 def hf_token():
     try:
-        return Path(HF_TOKEN_FILE).read_text().strip()
+        return Path(HF_TOKEN_FILE).read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
 
@@ -1185,7 +1197,7 @@ TMDB_KEY_FILE = BASE_CONFIG_DIR / "tmdb_cle"      # clé TMDB gratuite (films, s
 
 def tmdb_key():
     try:
-        return Path(TMDB_KEY_FILE).read_text().strip()
+        return Path(TMDB_KEY_FILE).read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
 
@@ -1347,7 +1359,7 @@ def list_characters():
     out = []
     for d in dirs:
         try:
-            out.append((d, json.loads((d / "character.json").read_text()).get("name", d.name)))
+            out.append((d, json.loads((d / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", d.name)))
         except Exception:
             pass
     return out
@@ -4618,7 +4630,7 @@ def search_roots(extra=()):
     else:
         sysdirs = ("/", "/boot", "/efi", "/home", "/var", "/usr", "/tmp", "/opt", "/srv", "/root", "/nix", "/snap")
         try:
-            for line in Path("/proc/mounts").read_text().splitlines():
+            for line in Path("/proc/mounts").read_text(encoding="utf-8", errors="replace").splitlines():
                 dev, mnt, fs = line.split()[:3]
                 mnt = mnt.replace("\\040", " ")
                 if fs not in ("ext4", "ext3", "btrfs", "xfs", "ntfs", "ntfs3", "fuseblk", "exfat", "vfat", "f2fs",
@@ -5708,6 +5720,8 @@ class Companion(QWidget):
                 QTimer.singleShot(4000, lambda: curseur_viki.AVATAR.__setitem__("img", self._avatar_viki()))
                 if self.cfg.get("roue_deux_boutons"):
                     QTimer.singleShot(5000, lambda: self.roue_deux_boutons(True, au_demarrage=True))
+                if curseur_windows and self.cfg.get("roue_raccourci_win"):     # Windows : Win+Alt+Espace
+                    QTimer.singleShot(5500, lambda: self.curseur_raccourci(silencieux=True))
             threading.Thread(target=self._partage_loop, daemon=True).start()   # 🙈 partage d'écran
             if memoire_fichiers and self.cfg.get("memoire_dossiers"):     # 📚 relire les fichiers changés
                 QTimer.singleShot(90_000, self.memoire_indexer)
@@ -5763,8 +5777,8 @@ class Companion(QWidget):
     def _check_battery(self):
         try:
             for bat in Path("/sys/class/power_supply").glob("BAT*"):
-                cap = int((bat / "capacity").read_text().strip())
-                status = (bat / "status").read_text().strip()
+                cap = int((bat / "capacity").read_text(encoding="utf-8", errors="replace").strip())
+                status = (bat / "status").read_text(encoding="utf-8", errors="replace").strip()
                 if status == "Discharging" and cap <= 15 and not self.battery_warned:
                     self.battery_warned = True
                     self.surprise_until = time.monotonic() + 1
@@ -5828,14 +5842,14 @@ class Companion(QWidget):
     # ---------- mémoire (locale)
     def _load_memory(self):
         try:
-            return json.loads(MEMORY_FILE.read_text())
+            return json.loads(MEMORY_FILE.read_text(encoding="utf-8", errors="replace"))
         except Exception:
             return {"faits": [], "historique": []}
 
     def _save_memory(self):
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            MEMORY_FILE.write_text(json.dumps(self.memory, indent=2, ensure_ascii=False))
+            MEMORY_FILE.write_text(json.dumps(self.memory, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             print("Mémoire :", e, file=sys.stderr)
 
@@ -6005,7 +6019,7 @@ class Companion(QWidget):
         if not (cdir / "character.json").exists():
             cdir = ASSETS_DIR
         self.char_dir = cdir
-        self.char = json.loads((cdir / "character.json").read_text())
+        self.char = json.loads((cdir / "character.json").read_text(encoding="utf-8", errors="replace"))
         self.char_base = dict(self.char)
         img_dir = cdir
         self.outfit = self._pick_outfit()
@@ -6108,9 +6122,9 @@ class Companion(QWidget):
             slug = re.sub(r"[^\w\-]", "", Path(cdir).name)
             f = BASE_CONFIG_DIR / "invites" / slug / "config.json"
             try:
-                g = json.loads(f.read_text())
+                g = json.loads(f.read_text(encoding="utf-8", errors="replace"))
                 g["taille_hote"] = px
-                f.write_text(json.dumps(g, indent=2, ensure_ascii=False))
+                f.write_text(json.dumps(g, indent=2, ensure_ascii=False), encoding="utf-8")
             except Exception:
                 pass
             self._guest_send(slug, f"taille:{px}")
@@ -6388,11 +6402,18 @@ class Companion(QWidget):
                         pass
                 if not info.get("l2d_scale") and not info.get("_recadre"):
                     self._refit_model(info)                 # anciens imports : on recadre une fois
+                if not (old and old[0].path == path):
+                    if _L2D_EN_COURS.exists() and _L2D_EN_COURS.read_text(encoding="utf-8", errors="replace") == path:
+                        _L2D_EN_COURS.unlink(missing_ok=True)       # la dernière fois, ce modèle a fait planter Viki
+                        raise RuntimeError("ce modèle a fait planter Viki au dernier lancement")
+                    _L2D_EN_COURS.write_text(path, encoding="utf-8")
                 m = old[0] if old and old[0].path == path else live2d_rendu.Live2DModel(
                     path, info.get("l2d_scale", 1.0))
             x0, y0, x1, y1 = info["crop"]
             f = self.cw * self.dpr / max(1, x1 - x0)
             m.resize(info["canvas"][0] * f, info["canvas"][1] * f)
+            if typ != "spine":
+                QTimer.singleShot(4000, lambda: _L2D_EN_COURS.unlink(missing_ok=True))   # bien dessiné : tout va bien
             if old and old[0] is not m:
                 try:
                     old[0].close()                                 # ancien modèle libéré proprement
@@ -6589,7 +6610,7 @@ class Companion(QWidget):
     def _refit_model(self, info=None):
         """Refait l'aperçu et le cadre d'un modèle animé (pour qu'il ne soit plus coupé)."""
         f = Path(self.char_dir) / "character.json"
-        info = info if info is not None else json.loads(f.read_text())
+        info = info if info is not None else json.loads(f.read_text(encoding="utf-8", errors="replace"))
         try:
             if info.get("type") == "spine" and spine_rendu:
                 prev = spine_rendu.render_preview(Path(self.char_dir) / info["spine"],
@@ -6604,7 +6625,7 @@ class Companion(QWidget):
                 return False
             info.update(canvas=prev["canvas"], crop=prev["crop"], eyes=prev["eyes"], mouth=prev["mouth"],
                         _recadre=2)
-            f.write_text(json.dumps(info, ensure_ascii=False, indent=2))
+            f.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
             self.char_base.update(info)
             self.char.update({k: info[k] for k in ("canvas", "crop", "eyes", "mouth") if k in info})
             return True
@@ -6868,7 +6889,7 @@ class Companion(QWidget):
         if tdir.exists():
             for d in sorted(tdir.iterdir()):
                 try:
-                    o = json.loads((d / "tenue.json").read_text())
+                    o = json.loads((d / "tenue.json").read_text(encoding="utf-8", errors="replace"))
                     o["_dir"], o["_slug"] = str(d), d.name
                     out.append(o)
                 except Exception:
@@ -6957,9 +6978,9 @@ class Companion(QWidget):
         """Change le moment où une tenue est mise (soir, musique, mode jeu…)."""
         f = (Path(self.char_dir) / "tenues" / slug / "tenue.json")
         try:
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
             data["quand"] = quand
-            f.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            f.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             return self.say(f"Je n'ai pas pu changer ça : {str(e)[:80]}")
         if self.cfg.get("tenue", "auto") == "auto":
@@ -7009,7 +7030,7 @@ class Companion(QWidget):
         tenue = {"name": name, "quand": quand, "image": "character.png", "hitmask": "hitmask.png",
                  "eyes": data["eyes"], "mouth": data["mouth"], "skin_sample": data["skin_sample"],
                  "zones": data["zones"], "cut_bottom": img.text("cut") == "1"}
-        (d / "tenue.json").write_text(json.dumps(tenue, indent=2, ensure_ascii=False))
+        (d / "tenue.json").write_text(json.dumps(tenue, indent=2, ensure_ascii=False), encoding="utf-8")
         self.change_outfit(d.name if quand == "manuel" else "auto")
 
     def _place_initially(self):
@@ -8304,7 +8325,7 @@ class Companion(QWidget):
         cp = QPushButton("Copier")
         cp.clicked.connect(lambda: QApplication.clipboard().setText(ed.toPlainText()))
         clr = QPushButton("Vider")
-        clr.clicked.connect(lambda: (Path(path).write_text(""), ed.setPlainText(empty)))
+        clr.clicked.connect(lambda: (Path(path).write_text("", encoding="utf-8"), ed.setPlainText(empty)))
         close = QPushButton("Fermer")
         close.clicked.connect(dlg.accept)
         row.addWidget(cp)
@@ -8649,7 +8670,7 @@ class Companion(QWidget):
         cdir = Path(cdir)
         f = cdir / "character.json"
         try:
-            info = json.loads(f.read_text())
+            info = json.loads(f.read_text(encoding="utf-8", errors="replace"))
         except Exception as e:
             return QMessageBox.warning(None, "Renommer", f"Impossible de lire ce personnage : {e}")
         old = info.get("name", "")
@@ -8662,7 +8683,7 @@ class Companion(QWidget):
             return
         info["name"] = name
         try:
-            f.write_text(json.dumps(info, ensure_ascii=False, indent=2))
+            f.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             return QMessageBox.warning(None, "Renommer", f"Impossible d'enregistrer : {e}")
         if cdir.resolve() == Path(self.char_dir).resolve():
@@ -9604,6 +9625,16 @@ class Companion(QWidget):
         self.handle_drop(paths)
 
     def open_tor(self):
+        if IS_WIN:                                       # Windows : le navigateur Tor officiel (winget)
+            try:
+                import windows_outils as WO
+                if WO.est_installe("tor browser"):
+                    return self.say("Le navigateur Tor est installé : ouvre-le depuis le menu Démarrer (« Tor Browser »). 🧅")
+                return self.ask_yes("Sous Windows, le plus simple pour Tor est le navigateur Tor officiel. Je l'installe "
+                                    "avec winget (le gestionnaire d'applis de Windows) ? (oui / non)",
+                                    lambda: WO.terminal([WO.winget_installer("TorProject.TorBrowser")], "Navigateur Tor"))
+            except Exception:
+                return self.say("Installe le navigateur Tor depuis torproject.org.")
         try:
             import tor_viki
             w = self.__dict__.get("tor_win")
@@ -11481,7 +11512,7 @@ class Companion(QWidget):
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("#!/bin/sh\n# Commande « viki » : viki say, viki emote, viki run, viki jouer\n"
-                              + line + "\n")
+                              + line + "\n", encoding="utf-8")
             target.chmod(0o755)
         except Exception as e:
             return self.say(f"Je n'ai pas pu installer la commande : {str(e)[:80]}")
@@ -13912,12 +13943,20 @@ class Companion(QWidget):
             f = a.font()
             f.setBold(True)
             a.setFont(f)
-        m.addAction(tr_("🎡 La roue de Viki autour de la souris (Meta+Alt+Espace)"), self.roue_curseur)
-        m.addAction(tr_("⌨️ Activer le raccourci Meta+Alt+Espace…"), self.curseur_raccourci)
+        rac = self._touche_roue
+        m.addAction(rac(tr_("🎡 La roue de Viki autour de la souris (Meta+Alt+Espace)")), self.roue_curseur)
+        if not (curseur_windows and self.cfg.get("roue_raccourci_win")):
+            m.addAction(rac(tr_("⌨️ Activer le raccourci Meta+Alt+Espace…")), self.curseur_raccourci)
         b = m.addAction(tr_("🖱️ Ouvrir la roue avec les deux boutons de la souris"))
         b.setCheckable(True)
         b.setChecked(bool(self.cfg.get("roue_deux_boutons")) and bool(self.__dict__.get("_accord")))
         b.toggled.connect(self.roue_deux_boutons)
+
+    def _touche_roue(self, t):
+        """« Meta+Alt+Espace » -> la touche qui ouvre vraiment la roue (Win+Alt+Espace sous Windows)."""
+        if curseur_windows:
+            return t.replace("Meta+Alt+", curseur_windows.RACCOURCI.split("Espace")[0])
+        return t
 
     def mode_curseur_menu(self):
         if not curseur_viki:
@@ -13928,7 +13967,10 @@ class Companion(QWidget):
 
     def roue_deux_boutons(self, on=True, au_demarrage=False):
         """Gauche + droit en même temps, n'importe où : la roue s'ouvre."""
-        import souris_globale as SG
+        if curseur_windows:
+            SG = curseur_windows                          # Windows : un crochet souris, rien à autoriser
+        else:
+            import souris_globale as SG
         a = self.__dict__.get("_accord")
         if not on:
             if a is not None:
@@ -13978,6 +14020,14 @@ class Companion(QWidget):
 
     def curseur_raccourci(self, silencieux=False):
         """Inscrit les raccourcis de Viki (dont Meta+Alt+Espace pour la roue) dans les réglages du bureau."""
+        if curseur_windows:                               # Windows : on écoute la touche nous-mêmes
+            rac = curseur_windows.raccourci(lambda: self.bridge.bg_done.emit(lambda _x=None: self.roue_curseur(), None))
+            self.cfg["roue_raccourci_win"] = bool(rac)
+            save_config(self.cfg)
+            if not silencieux:
+                self.say(f"C'est fait : {rac} ouvre ma roue autour de ta souris ! 🎡" if rac else
+                         "Windows garde déjà ce raccourci pour lui, désolée. Utilise les deux boutons de la souris !")
+            return bool(rac)
         try:
             import touches as _t
         except Exception:
@@ -14035,8 +14085,8 @@ class Companion(QWidget):
                 if not demander:
                     return
                 self.curseur_raccourci(silencieux=True)          # la roue tout de suite à portée de main
-                self.say("Et voilà, ton curseur est le mien ! 💖 (Certaines applis le prennent après un redémarrage.) "
-                         "Meta+Alt+Espace ouvre ma roue autour de lui.")
+                self.say(self._touche_roue("Et voilà, ton curseur est le mien ! 💖 (Certaines applis le prennent après un "
+                                           "redémarrage.) Meta+Alt+Espace ouvre ma roue autour de lui."))
             self._bg(work, done)
         if not demander:
             return go()
@@ -14673,8 +14723,8 @@ class Companion(QWidget):
             if a["alertes"]:
                 lignes.append("\n" + "\n".join("• " + x for x in a["alertes"]))
             if a["clamav"]:
-                lignes.append("\n🦠 ClamAV : " + a["clamav"])
-            elif not shutil.which("clamscan"):
+                lignes.append(("\n🦠 Antivirus Windows : " if IS_WIN else "\n🦠 ClamAV : ") + a["clamav"])
+            elif not IS_WIN and not shutil.which("clamscan"):
                 lignes.append("\n" + (i18n.tr_to("(Pour une vérification antivirus en plus, installe ClamAV.)", lg)
                                        if trad else "(Pour une vérification antivirus en plus, installe ClamAV.)"))
             if avis:
@@ -14702,7 +14752,7 @@ class Companion(QWidget):
                 try:
                     for fd in os.listdir(f"/proc/{pid}/fd"):
                         if os.readlink(f"/proc/{pid}/fd/{fd}").startswith("/dev/video"):
-                            cam.add(Path(f"/proc/{pid}/comm").read_text().strip())
+                            cam.add(Path(f"/proc/{pid}/comm").read_text(encoding="utf-8", errors="replace").strip())
                             break
                 except OSError:
                     continue
@@ -15074,15 +15124,18 @@ class Companion(QWidget):
         if not r:
             return self.say(f"Personne n'utilise le port {n} : il est libre. 👍")
         noms = ", ".join(sorted({x[0] for x in r if x[0] != "?"})) or "un programme du système"
-        cmds = [f"kill {pid}" for _nom, pid, _p in r if pid]
-        if any(not pid for _nom, pid, _p in r):
+        cmds = [(f"taskkill /PID {pid}" if IS_WIN else f"kill {pid}") for _nom, pid, _p in r if pid]
+        if IS_WIN:
+            pass
+        elif any(not pid for _nom, pid, _p in r):
             cmds.append(f"sudo ss -ltnup 'sport = :{n}'")
             cmds.append(f"sudo fuser -k {n}/tcp")
         self.say(f"Le port {n} est utilisé par {noms}." + (" Pour l'arrêter, la commande est dans la carte." if cmds else ""))
         if cmds:
             self.montrer_commandes(cmds, titre=self.trd("Libérer le port {}").format(n),
                                    aide=self.trd("« kill » arrête le programme proprement. Attention : ce qu'il faisait "
-                                                 "s'arrête aussi."))
+                                                 "s'arrête aussi.") if not IS_WIN else
+                                   self.trd("« taskkill » arrête le programme. Attention : ce qu'il faisait s'arrête aussi."))
 
     # --- 📜 surveiller un fichier de log
     def surveiller_log(self, chemin=""):
@@ -15472,7 +15525,9 @@ class Companion(QWidget):
             faits = clic_fichiers.installer()
             self.say(("C'est fait ! Fais un clic droit sur un fichier → « Viki » (" + ", ".join(faits) + ").")
                      if faits else "Je n'ai pas trouvé Dolphin, Nautilus ou Nemo sur ce PC.")
-        self.ask_yes("J'ajoute « Viki » au clic droit de tes fichiers (Dolphin, Nautilus, Nemo) ? Je n'écris que "
+        self.ask_yes(("J'ajoute « Viki » au clic droit de tes fichiers (Explorateur de Windows) ? Je n'écris que "
+                      "quelques lignes dans ton registre, rien d'autre. (oui / non)") if IS_WIN else
+                     "J'ajoute « Viki » au clic droit de tes fichiers (Dolphin, Nautilus, Nemo) ? Je n'écris que "
                      "de petits fichiers de menu dans ton dossier personnel. (oui / non)", go)
 
     def fichier_action(self, act, chemins):
@@ -15998,7 +16053,12 @@ class Companion(QWidget):
     def _lanceurs_a_jour(self):
         """Au démarrage : le script stable, le démarrage avec le PC, le clic droit des fichiers et Alt+E
         pointent vers cette version de Viki (même si l'AppImage a été déplacée ou renommée)."""
-        if IS_WIN:
+        if IS_WIN:                                         # Windows : le clic droit suit Viki.exe s'il a bougé
+            try:
+                if clic_fichiers and clic_fichiers.installe() and not clic_fichiers.a_jour():
+                    clic_fichiers.installer()
+            except Exception:
+                pass
             return
         try:
             import touches as _t
@@ -17332,7 +17392,7 @@ class Companion(QWidget):
         import zipfile
         cdir = Path(cdir or self.char_dir)
         try:
-            name = json.loads((cdir / "character.json").read_text()).get("name", cdir.name)
+            name = json.loads((cdir / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", cdir.name)
         except Exception as e:
             return self.say(f"Je n'arrive pas à lire ce personnage : {e}")
         default = str(Path.home() / f"{re.sub(r'[^A-Za-z0-9_-]+', '_', name)}.vikipack")
@@ -18323,7 +18383,7 @@ class Companion(QWidget):
             while self._res_wanted():
                 try:
                     r = {}
-                    if gestionpc and not IS_WIN:
+                    if gestionpc:                              # (Windows aussi : windows_outils)
                         r["cpu"] = gestionpc.cpu_percent(0.6)[0]
                         m = gestionpc.mem()
                         r["ram"], r["ram_tot"] = m["utilise"], m["total"]
@@ -18342,7 +18402,7 @@ class Companion(QWidget):
 
     def _res_wanted(self):
         mode = self.cfg.get("ressources_ronds", "toujours")
-        if mode == "jamais" or IS_WIN:
+        if mode == "jamais" or not gestionpc:
             return False
         b = self.__dict__.get("input_box")
         if b is not None and getattr(b, "colonne", False) and b.isVisible():
@@ -19988,7 +20048,7 @@ class Companion(QWidget):
         names = [self.char.get("name", "")]
         for cdir in self.cfg.get("invites", []):
             try:
-                names.append(json.loads((Path(cdir) / "character.json").read_text()).get("name", ""))
+                names.append(json.loads((Path(cdir) / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", ""))
             except Exception:
                 pass
         return [n for n in names if n]
@@ -19996,7 +20056,7 @@ class Companion(QWidget):
     def _guest_by_name(self, name):
         for cdir in self.cfg.get("invites", []):
             try:
-                if json.loads((Path(cdir) / "character.json").read_text()).get("name") == name:
+                if json.loads((Path(cdir) / "character.json").read_text(encoding="utf-8", errors="replace")).get("name") == name:
                     return re.sub(r"[^\w\-]", "", Path(cdir).name)
             except Exception:
                 pass
@@ -20118,7 +20178,7 @@ class Companion(QWidget):
         if gx + self.W > scr.right():
             gx = max(scr.left(), self.x() - int(self.W * 0.85))
         try:
-            gcfg = json.loads(gfile.read_text())
+            gcfg = json.loads(gfile.read_text(encoding="utf-8", errors="replace"))
         except Exception:
             gcfg = {k: self.cfg.get(k) for k in ("voice", "volume", "piper_voice", "piper_speaker", "ollama_model",
                                                  "bubble_theme", "bubble_size", "chatty", "sleepy", "prenom",
@@ -20130,7 +20190,7 @@ class Companion(QWidget):
                          "pos": [gx, self.y()]})
         gcfg["character_dir"] = cdir
         self._guest_voice(gcfg)
-        gfile.write_text(json.dumps(gcfg, indent=2, ensure_ascii=False))
+        gfile.write_text(json.dumps(gcfg, indent=2, ensure_ascii=False), encoding="utf-8")
         if cdir not in self.cfg.setdefault("invites", []):
             self.cfg["invites"].append(cdir)
             save_config(self.cfg)
@@ -20138,7 +20198,7 @@ class Companion(QWidget):
         self._restart_stt()
         self._rebuild_menus()
         try:
-            gname = json.loads((Path(cdir) / "character.json").read_text()).get("name", "mon amie")
+            gname = json.loads((Path(cdir) / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", "mon amie")
         except Exception:
             gname = "mon amie"
         self.happy_until = time.monotonic() + 1.5
@@ -20170,15 +20230,15 @@ class Companion(QWidget):
             return
         gfile = BASE_CONFIG_DIR / "invites" / slug / "config.json"
         try:
-            gcfg = json.loads(gfile.read_text())
+            gcfg = json.loads(gfile.read_text(encoding="utf-8", errors="replace"))
             if self._guest_voice(gcfg):
-                gfile.write_text(json.dumps(gcfg, indent=2, ensure_ascii=False))
+                gfile.write_text(json.dumps(gcfg, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
         try:
-            g = json.loads(gfile.read_text())
+            g = json.loads(gfile.read_text(encoding="utf-8", errors="replace"))
             g["taille_hote"] = self.host_size()
-            gfile.write_text(json.dumps(g, indent=2, ensure_ascii=False))
+            gfile.write_text(json.dumps(g, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
         env = dict(os.environ, COMPAGNON_PROFIL=slug)
@@ -20200,7 +20260,7 @@ class Companion(QWidget):
             inv.addAction("💬 Faites la conversation !", self.start_duo)
             for c in sorted(invited):
                 try:
-                    nm = json.loads((Path(c) / "character.json").read_text()).get("name", Path(c).name)
+                    nm = json.loads((Path(c) / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", Path(c).name)
                 except Exception:
                     nm = Path(c).name
                 inv.addAction(f"👋 Renvoyer {nm}", lambda cc=c: self.dismiss(cc))
@@ -20236,7 +20296,7 @@ class Companion(QWidget):
             self.say("Attends, elle arrive…")
             return
         try:
-            gchar = json.loads((Path(cdir) / "character.json").read_text())
+            gchar = json.loads((Path(cdir) / "character.json").read_text(encoding="utf-8", errors="replace"))
         except Exception:
             gchar = {}
         na, nb = self.char.get("name", "A"), gchar.get("name", "B")
@@ -20398,9 +20458,9 @@ class Companion(QWidget):
             self.say(f"Je n'ai pas réussi à caler cette expression : {err}")
             return
         cfile = Path(self.char_dir) / "character.json"
-        data = json.loads(cfile.read_text())
+        data = json.loads(cfile.read_text(encoding="utf-8", errors="replace"))
         data.setdefault("expressions", {})[emo] = f"expressions/{emo}.png"
-        cfile.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        cfile.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._load_character()
         self._apply_scale(self.scale)
         now = time.monotonic()
@@ -20410,11 +20470,11 @@ class Companion(QWidget):
 
     def remove_expression(self, emo):
         cfile = Path(self.char_dir) / "character.json"
-        data = json.loads(cfile.read_text())
+        data = json.loads(cfile.read_text(encoding="utf-8", errors="replace"))
         rel = (data.get("expressions") or {}).pop(emo, None)
         if rel:
             (Path(self.char_dir) / rel).unlink(missing_ok=True)
-        cfile.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        cfile.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._load_character()
         self._apply_scale(self.scale)
 
@@ -21110,7 +21170,7 @@ class Companion(QWidget):
             if OBJ_ROOT.exists():
                 for d in sorted(OBJ_ROOT.iterdir()):
                     try:
-                        o = json.loads((d / "objet.json").read_text())
+                        o = json.loads((d / "objet.json").read_text(encoding="utf-8", errors="replace"))
                         o["_dir"] = str(d)
                         self._objs[d.name] = o
                     except Exception:
@@ -21214,7 +21274,7 @@ class Companion(QWidget):
         if dlg.img2 is not None:
             dlg.img2.save(str(d / "image2.png"))
             data["image2"] = "image2.png"
-        (d / "objet.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        (d / "objet.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self.objects_lib(reload=True)
         self.last_obj = d.name
         if self.scene:
@@ -21268,7 +21328,7 @@ class Companion(QWidget):
             return
         o["taille"] = round(min(1.2, max(0.05, float(o.get("taille", 0.3)) * factor)), 3)
         data = {k: v for k, v in o.items() if not k.startswith("_")}
-        (Path(o["_dir"]) / "objet.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        (Path(o["_dir"]) / "objet.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._obj_pix = {}
         self._update_mask()
 
@@ -21924,13 +21984,13 @@ class Companion(QWidget):
         """Change de version / tenue d'un modèle Live2D (même personnage)."""
         f = Path(self.char_dir) / "character.json"
         try:
-            info = json.loads(f.read_text())
+            info = json.loads(f.read_text(encoding="utf-8", errors="replace"))
             info["live2d"] = rel
             if live2d_rendu:                    # recadrage pour cette tenue
                 prev = live2d_rendu.render_preview(Path(self.char_dir) / rel, Path(self.char_dir) / "character.png")
                 info.update(canvas=prev["canvas"], crop=prev["crop"], eyes=prev["eyes"], mouth=prev["mouth"],
                             l2d_scale=prev.get("l2d_scale", 1.0))
-            f.write_text(json.dumps(info, ensure_ascii=False, indent=2))
+            f.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             return QMessageBox.warning(None, "Live2D", f"Impossible de changer de tenue : {e}")
         self.l2d = None
@@ -22095,7 +22155,7 @@ class Companion(QWidget):
                     "image": "character.png", "scale": round(min(1.0, screen_h * 0.45 / info["size"][1]), 3),
                     "canvas": info["canvas"], "crop": info["crop"], "eyes": info["eyes"], "mouth": info["mouth"],
                     "zones": []}
-            (dest / "character.json").write_text(json.dumps(char, ensure_ascii=False, indent=2))
+            (dest / "character.json").write_text(json.dumps(char, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             self._cleanup_import(tmp, temporary)
             return self._import_error("Spine", e)
@@ -22107,7 +22167,7 @@ class Companion(QWidget):
         """Animation de repos ou peau (tenue) d'un modèle Spine."""
         f = Path(self.char_dir) / "character.json"
         try:
-            info = json.loads(f.read_text())
+            info = json.loads(f.read_text(encoding="utf-8", errors="replace"))
             info[key] = value
             if spine_rendu:
                 prev = spine_rendu.render_preview(Path(self.char_dir) / info["spine"],
@@ -22115,7 +22175,7 @@ class Companion(QWidget):
                                                   Path(self.char_dir) / "character.png",
                                                   idle=info.get("idle"), skin=info.get("skin"))
                 info.update(canvas=prev["canvas"], crop=prev["crop"])
-            f.write_text(json.dumps(info, ensure_ascii=False, indent=2))
+            f.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             return QMessageBox.warning(None, "Spine", f"Impossible de changer ça : {e}")
         self.l2d = None
@@ -22251,7 +22311,7 @@ class Companion(QWidget):
             try:
                 self.say("Je prépare ton nouveau personnage…")
                 QApplication.processEvents()
-                info = live2d_rendu.render_preview(dest / rel, dest / "character.png")
+                info = self._apercu_l2d_a_part(dest / rel, dest / "character.png")
                 screen_h = self.app.primaryScreen().availableGeometry().height()
                 char = {"name": name, "type": "live2d", "live2d": rel.as_posix(), "variantes": variants,
                         "l2d_scale": info.get("l2d_scale", 1.0), "_recadre": 2,
@@ -22259,13 +22319,48 @@ class Companion(QWidget):
                         "image": "character.png", "scale": round(min(1.0, screen_h * 0.45 / info["size"][1]), 3),
                         "canvas": info["canvas"], "crop": info["crop"], "eyes": info["eyes"],
                         "mouth": info["mouth"], "zones": []}
-                (dest / "character.json").write_text(json.dumps(char, ensure_ascii=False, indent=2))
+                (dest / "character.json").write_text(json.dumps(char, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as e:
                 shutil.rmtree(dest, ignore_errors=True)
                 return self._import_error("Live2D", e)
             self.switch_character(dest)
             self.say(f"Coucou ! Je suis {name}. Tu peux me changer quand tu veux dans « Personnages ».")
         self._bg(place, done)
+
+    def _apercu_l2d_a_part(self, modele, png):
+        """Dessine l'aperçu d'un modèle Live2D dans un programme séparé : si la carte graphique ou le modèle
+        font planter le moteur, seul ce petit programme tombe, et Viki explique au lieu de se fermer."""
+        sortie = Path(str(self.tmpdir)) / f"apercu_{os.getpid()}_{int(time.time())}.json"
+        cmd = ([sys.executable] if plateforme.FROZEN else [sys.executable, str(APP_DIR / "compagnon.py")]) + \
+            ["--apercu-live2d", str(modele), str(png), str(sortie)]
+        kw = {"creationflags": plateforme.CREATE_NO_WINDOW} if IS_WIN else {}
+        res = {}
+
+        def lancer():
+            try:
+                res["r"] = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=180, **kw)
+            except Exception as e:
+                res["e"] = e
+        t = threading.Thread(target=lancer, daemon=True)
+        t.start()
+        while t.is_alive():                                  # l'interface reste vivante pendant l'essai
+            QApplication.processEvents()
+            time.sleep(0.03)
+        if "e" in res:
+            raise RuntimeError("l'essai du modèle n'a pas pu se lancer : " + str(res["e"])[:120])
+        r = res["r"]
+        if r.returncode != 0 or not sortie.exists():
+            err = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            log_error(f"aperçu Live2D à part : code {r.returncode & 0xFFFFFFFF:#x}\n" + "\n".join(err[-25:]))
+            msg = next((l.split("RuntimeError:", 1)[1].strip() for l in reversed(err) if "RuntimeError:" in l), "")
+            if msg:
+                raise RuntimeError(msg)
+            raise RuntimeError("le moteur Live2D plante sur ce modèle avec ta carte graphique "
+                               f"(code {r.returncode & 0xFFFFFFFF:#x}). Je ne l'ai pas installé, et rien n'est cassé. "
+                               "Le détail est dans mon journal d'erreurs.")
+        info = json.loads(sortie.read_text(encoding="utf-8"))
+        sortie.unlink(missing_ok=True)
+        return info
 
     def _cleanup_import(self, tmp, temporary):
         if temporary and tmp and Path(tmp).exists():
@@ -22283,6 +22378,19 @@ class Companion(QWidget):
                     sw.menu.setCurrentRow(i)
                     break
 
+    def _sig_reglages(self):
+        """Ce que les Réglages affichent (oui/non, choix, textes) : s'il n'a pas bougé, la fenêtre peut resservir."""
+        volatils = ("jour", "date", "dernier", "derniere", "last", "_t", "vu", "stats", "msgs", "xp", "humeur",
+                    "pos", "historique", "compteur")
+        items = sorted((k, v) for k, v in self.cfg.items() if isinstance(v, (bool, str, float))
+                       and not any(x in k.lower() for x in volatils))
+        try:
+            th = themes.effective() if themes else ""
+        except Exception:
+            th = ""
+        return hash((tuple(items), th, (i18n.LANG if i18n and hasattr(i18n, "LANG") else ""),
+                     self.char.get("name", "")))
+
     def open_settings(self, page=None):
         try:
             import reglages
@@ -22290,10 +22398,32 @@ class Companion(QWidget):
             QMessageBox.warning(None, "Réglages", f"Le fichier reglages.py est introuvable ou abîmé :\n{e}")
             return
         old = getattr(self, "settings_win", None)
+        sig = self._sig_reglages()
+        if old is not None and self.__dict__.get("_reglages_sig") == sig:    # rien n'a changé : on la remontre
+            try:
+                if page is not None:
+                    if hasattr(old, "select_page"):
+                        old.select_page(page)
+                    else:
+                        old.menu.setCurrentRow(page)
+                old.show()
+                old.raise_()
+                old.activateWindow()
+                return
+            except RuntimeError:
+                pass
         if old:
             old.close()
             old.deleteLater()
+        self._reglages_sig = sig
         self.settings_win = reglages.SettingsWindow(self, sys.modules[__name__])
+        _sw, _fermer = self.settings_win, self.settings_win.closeEvent
+
+        def _a_la_fermeture(e, _sw=_sw, _fermer=_fermer):     # ce qu'on y a changé est déjà affiché dedans
+            if self.__dict__.get("settings_win") is _sw:
+                self._reglages_sig = self._sig_reglages()
+            _fermer(e)
+        self.settings_win.closeEvent = _a_la_fermeture
         if page is not None:
             if hasattr(self.settings_win, "select_page"):
                 self.settings_win.select_page(page)
@@ -23163,7 +23293,7 @@ class Companion(QWidget):
                      "scale": round(min(1.0, (580 if img.height() > 1.7 * img.width() else 460)
                                         / img.height()), 2),
                      "lash_color": "#2a1414"})
-        (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self._placer_nouveau(cdir)
 
     def _placer_nouveau(self, cdir, a_cote=False):
@@ -23229,7 +23359,7 @@ class Companion(QWidget):
     def _finish_animated(self, path, tmp, r, parle_pour):
         if parle_pour:                                          # 2e animation d'un personnage existant
             cdir = Path(parle_pour)
-            data = json.loads((cdir / "character.json").read_text())
+            data = json.loads((cdir / "character.json").read_text(encoding="utf-8", errors="replace"))
             base = QImage(str(cdir / "character.png"))
             if r["premiere"].size() != base.size():             # même cadre que l'animation de repos
                 for f in sorted((tmp / "anim").glob("f*.png")):
@@ -23238,7 +23368,7 @@ class Companion(QWidget):
             shutil.rmtree(cdir / "anim_parle", ignore_errors=True)
             shutil.copytree(tmp / "anim", cdir / "anim_parle")
             data["anim_parle"] = {"n": r["n"], "fps": r["fps"]}
-            (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
             self.switch_character(cdir, greet=False)
             return self.say("C'est noté : je passerai sur cette animation quand je parle !")
         img = r["premiere"]
@@ -23265,7 +23395,7 @@ class Companion(QWidget):
         data.update({"image": "character.png", "hitmask": "hitmask.png", "cut_bottom": False,
                      "scale": round(min(1.0, (580 if img.height() > 1.7 * img.width() else 460) / img.height()), 2),
                      "lash_color": "#2a1414", "anim": {"n": r["n"], "fps": r["fps"]}})
-        (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        (cdir / "character.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         if getattr(self, "_nouveau_a_cote", False):
             self._nouveau_a_cote = False
             return self._placer_nouveau(cdir, a_cote=True)
@@ -23298,7 +23428,7 @@ class Companion(QWidget):
         self.char.update(dlg.result_data())
         try:
             (self.char_dir / "character.json").write_text(
-                json.dumps(self.char, indent=2, ensure_ascii=False))
+                json.dumps(self.char, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             QMessageBox.warning(None, "Viki", f"Impossible d'enregistrer : {e}")
             return
@@ -23886,6 +24016,9 @@ def log_error(where="", exc=None):
     print(txt, file=sys.stderr)
 
 
+_L2D_EN_COURS = CONFIG_DIR / "live2d_en_cours"   # 🛟 présent = un modèle Live2D est en train de se charger
+
+
 def _install_safety_net():
     """Par défaut, PyQt6 ferme TOUTE l'appli à la moindre erreur Python dans un clic ou un minuteur.
     Ici, l'erreur est notée dans un journal et le compagnon continue."""
@@ -24048,9 +24181,14 @@ def cli(args):
         try:
             import shlex as _sh
             import touches as _t
-            subprocess.Popen((["flatpak-spawn", "--host"] if _t.FLATPAK else []) + _sh.split(_t.lanceur_reel()),
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
+            if IS_WIN:                                     # Windows : Viki.exe (ou Python + compagnon.py)
+                argv = [sys.executable] if getattr(sys, "frozen", False) else \
+                    [sys.executable.replace("python.exe", "pythonw.exe"), str(APP_DIR / "compagnon.py")]
+                subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen((["flatpak-spawn", "--host"] if _t.FLATPAK else []) + _sh.split(_t.lanceur_reel()),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
         except Exception:
             return 1
         for _i in range(40):
@@ -24138,7 +24276,7 @@ def _load_ui_font(app):
     ne couvre pas (chinois, japonais, hindi…) passent automatiquement par les polices du système.
     Réglages → Apparence → « Police du système » pour garder celle du bureau."""
     try:
-        if json.loads(CONFIG_FILE.read_text()).get("police", "viki") == "systeme":
+        if json.loads(CONFIG_FILE.read_text(encoding="utf-8", errors="replace")).get("police", "viki") == "systeme":
             return ""
     except Exception:
         pass
@@ -24166,10 +24304,24 @@ def _load_ui_font(app):
 
 
 def main():
+    for _flux in (sys.stdout, sys.stderr):              # Windows : la console n'aime pas les émojis -> on remplace
+        try:
+            if _flux is not None and (getattr(_flux, "encoding", "") or "").lower().replace("-", "") != "utf8":
+                _flux.reconfigure(errors="replace")
+        except Exception:
+            pass
     if len(sys.argv) > 1 and sys.argv[1].lstrip("-") in CLI_CMDS:
         sys.exit(cli(sys.argv[1:]))
     if "--diagnostic" in sys.argv:
         return diagnostic()
+    if "--apercu-live2d" in sys.argv:          # 🛟 premier dessin d'un modèle, à part : s'il plante, Viki reste debout
+        i = sys.argv.index("--apercu-live2d")
+        modele, png, sortie = sys.argv[i + 1:i + 4]
+        _app = QApplication([sys.argv[0]])
+        info = live2d_rendu.render_preview(Path(modele), Path(png))
+        Path(sortie).write_text(json.dumps(info, default=float), encoding="utf-8")
+        sys.stdout.flush()
+        os._exit(0)
     if "--ecoute" in sys.argv:                 # .exe Windows : l'oreille, lancée à part
         import runpy
         sys.argv = [str(APP_DIR / "ecoute.py")]
@@ -24178,6 +24330,11 @@ def main():
     _install_safety_net()
     _etape("6 lancement de l'interface")
     app = QApplication(sys.argv)
+    if IS_WIN:                     # le style natif de Windows ignore les couleurs du thème (texte blanc sur fond blanc)
+        try:
+            app.setStyle("Fusion")
+        except Exception:
+            pass
     _etape("7 interface ok")
     _load_emoji_font(app)
     _load_ui_font(app)
@@ -24253,7 +24410,7 @@ def main():
                 slug = msg[5:]
                 try:
                     nm = json.loads((Path(next(x for x in w.cfg.get("invites", []) if Path(x).name == slug))
-                                     / "character.json").read_text()).get("name", "elle")
+                                     / "character.json").read_text(encoding="utf-8", errors="replace")).get("name", "elle")
                 except Exception:
                     nm = "elle"
                 w.friend_clicked(nm)

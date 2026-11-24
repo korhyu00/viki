@@ -37,7 +37,7 @@ W, H = 168, 228
 
 def char_type(d, C):
     try:
-        info = json.loads((Path(d) / "character.json").read_text())
+        info = json.loads((Path(d) / "character.json").read_text(encoding="utf-8", errors="replace"))
     except Exception:
         info = {}
     if info.get("type") in ("live2d", "spine"):
@@ -140,7 +140,12 @@ class Galerie(QDialog):
         self.area.setFrameShape(QFrame.Shape.NoFrame)
         self.area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         v.addWidget(self.area, 1)
-        ok, _why = (C.live2d_rendu.available() if getattr(C, "live2d_rendu", None) else (False, "module absent"))
+        try:                                  # sans charger Live2D (et son gestionnaire de plantage) pour rien
+            import importlib.util as _iu
+            ok = bool(getattr(C, "live2d_rendu", None)) and _iu.find_spec("live2d") is not None \
+                and _iu.find_spec("OpenGL") is not None
+        except Exception:
+            ok = False
         self.live2d_ok = ok
         self.fill()
 
@@ -207,7 +212,7 @@ class Galerie(QDialog):
             img = QLabel()
             img.setFixedSize(W, H)
             try:
-                info = json.loads((d / "character.json").read_text())
+                info = json.loads((d / "character.json").read_text(encoding="utf-8", errors="replace"))
                 img.setPixmap(_vignette(d / info.get("image", "character.png"), actif))
             except Exception:
                 img.setPixmap(_vignette(d / "character.png", actif))

@@ -144,7 +144,7 @@ def install_hook(seuil=60):
         f.parent.mkdir(parents=True, exist_ok=True)
         old = f.read_text(errors="ignore") if f.exists() else ""
         if f.exists() and not (f.parent / (f.name + ".avant-viki")).exists():
-            (f.parent / (f.name + ".avant-viki")).write_text(old)
+            (f.parent / (f.name + ".avant-viki")).write_text(old, encoding="utf-8")
         f.write_text(_strip(old).rstrip("\n") + ("\n\n" if old.strip() else "") + block)
         done.append(str(f))
     return done

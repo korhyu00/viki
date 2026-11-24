@@ -5,3 +5,4 @@ __pycache__/
 voices/*.onnx
 voices/*.onnx.json
 historique_pc.json
+Viki-Windows.zip

@@ -29,7 +29,7 @@ def human(n):
 
 def _read(p):
     try:
-        return Path(p).read_text().strip()
+        return Path(p).read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
 
@@ -131,14 +131,14 @@ def sample():
 def record_history():
     """Toutes les 5 min : une mesure, gardée 24 h."""
     try:
-        h = json.loads(Path(HIST_FILE).read_text())
+        h = json.loads(Path(HIST_FILE).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         h = []
     h.append(sample())
     h = [x for x in h if x["t"] > time.time() - 86400][-300:]
     try:
         Path(HIST_FILE).parent.mkdir(parents=True, exist_ok=True)
-        Path(HIST_FILE).write_text(json.dumps(h))
+        Path(HIST_FILE).write_text(json.dumps(h), encoding="utf-8")
     except Exception:
         pass
     return h
@@ -146,13 +146,13 @@ def record_history():
 
 def history():
     try:
-        return json.loads(Path(HIST_FILE).read_text())
+        return json.loads(Path(HIST_FILE).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return []
 
 
 # ------------------------------------------------------------------ programmes gourmands
-PAGE = os.sysconf("SC_PAGE_SIZE")
+PAGE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096   # (Windows : pas de sysconf)
 
 
 def _proc_ticks():
@@ -161,10 +161,10 @@ def _proc_ticks():
         if not d.name.isdigit():
             continue
         try:
-            raw = (d / "stat").read_text()
+            raw = (d / "stat").read_text(encoding="utf-8", errors="replace")
             name = raw[raw.index("(") + 1:raw.rindex(")")]
             f = raw[raw.rindex(")") + 2:].split()
-            rss = int((d / "statm").read_text().split()[1]) * PAGE
+            rss = int((d / "statm").read_text(encoding="utf-8", errors="replace").split()[1]) * PAGE
             out[int(d.name)] = (name, int(f[11]) + int(f[12]), rss, d.stat().st_uid)
         except Exception:
             pass
@@ -967,10 +967,12 @@ def make_updates_window(comp):
             self.news = QtWidgets.QTextBrowser()
             self.news.setOpenExternalLinks(True)
             self.news.setMaximumHeight(200)
-            lay.addWidget(QtWidgets.QLabel("<b>📰 Nouvelles d'Arch Linux</b> (à lire avant de mettre à jour : "
-                                           "parfois une action manuelle est nécessaire)"))
-            lay.addWidget(self.news)
-            self.title = QtWidgets.QLabel("<b>Paquets à mettre à jour</b> — je regarde…")
+            if os.name != "nt":                            # (Windows : pas de nouvelles d'Arch)
+                lay.addWidget(QtWidgets.QLabel("<b>📰 Nouvelles d'Arch Linux</b> (à lire avant de mettre à jour : "
+                                               "parfois une action manuelle est nécessaire)"))
+                lay.addWidget(self.news)
+            self.title = QtWidgets.QLabel("<b>Logiciels à mettre à jour (winget)</b> — je regarde…" if os.name == "nt"
+                                          else "<b>Paquets à mettre à jour</b> — je regarde…")
             lay.addWidget(self.title)
             self.pk = QtWidgets.QListWidget()
             lay.addWidget(self.pk, 1)
@@ -1146,3 +1148,112 @@ def make_smart_clean(comp):
                      "Vide la corbeille quand tu es sûr.")
 
     return W()
+
+
+# ================================================================== Windows : les mêmes mesures, avec l'API de Windows
+if os.name == "nt":
+    try:
+        import windows_outils as _W
+
+        def cpu_percent(interval=0.4):
+            return _W.cpu_pourcent(interval), 0.0
+
+        def mem():
+            return _W.memoire()
+
+        def temps():
+            return {}                                   # Windows ne donne pas les températures sans droits admin
+
+        def disks():
+            out = []
+            for d in _W.lecteurs():
+                try:
+                    u = shutil.disk_usage(d)
+                    out.append({"nom": "Système" if d.upper().startswith(os.environ.get("SystemDrive", "C:").upper())
+                                else f"Disque {d[:2]}", "chemin": d, "total": u.total, "libre": u.free,
+                                "pct": round(100 * u.used / max(1, u.total), 1)})
+                except Exception:
+                    pass
+            return out
+
+        NOMS.update({"msedge": "Edge", "explorer": "Explorateur Windows", "MsMpEng": "Antivirus Windows (Defender)",
+                     "SearchIndexer": "Recherche Windows", "dwm": "Windows (affichage)", "Viki": "Viki",
+                     "svchost": "Services de Windows", "OneDrive": "OneDrive", "Teams": "Teams", "ms-teams": "Teams"})
+
+        def top_processes(interval=1.0, n=8):
+            ncpu = os.cpu_count() or 1
+            groups = {}
+            for name, pid, cpu, rss in _W.processus(interval):
+                if name in ("Idle", "System Idle Process"):
+                    continue
+                nom = NOMS.get(name, name)
+                g = groups.setdefault(nom, {"nom": nom, "cpu": 0.0, "ram": 0, "pids": [], "a_moi": True})
+                g["cpu"] += cpu
+                g["ram"] += rss
+                g["pids"].append(pid)
+                g["a_moi"] = g["a_moi"] and name not in ("System", "svchost", "lsass", "csrss", "wininit",
+                                                          "services", "smss", "MsMpEng", "dwm")
+            lst = list(groups.values())
+            for g in lst:
+                g["coeur"] = round(g["cpu"], 1)
+                g["cpu"] = round(g["cpu"] / ncpu, 1)
+            return sorted(lst, key=lambda g: -g["cpu"])[:n], sorted(lst, key=lambda g: -g["ram"])[:n]
+
+        def close_group(g, force=False):
+            return sum(1 for pid in g["pids"] if _W.arreter(pid, force)[0])
+
+        def external_drives():
+            out = []
+            for d in _W.lecteurs((2,)):
+                try:
+                    out.append({"chemin": d, "nom": d[:2], "libre": shutil.disk_usage(d).free})
+                except Exception:
+                    pass
+            return out
+
+        def distro():
+            return "windows"
+
+        def pending_updates():
+            return _W.mises_a_jour()
+
+        def update_command():
+            return "winget upgrade --all --accept-source-agreements --accept-package-agreements"
+
+        def terminal(cmd):
+            """Sous Windows : seulement des commandes PowerShell (les commandes Linux n'ont pas de sens ici)."""
+            if any(x in cmd for x in ("sudo ", "pacman", "apt ", "dnf ", "flatpak", "bash -c", "read -p", "usermod",
+                                      "systemctl", "| sh")):
+                return False
+            return _W.terminal([cmd], "Viki")
+
+        def disks_health():
+            r = _W.sante_disques()
+            if r is None:
+                return None
+            return [{"nom": d["nom"], "taille": 0, "ok": d["ok"], "details": [d["details"]], "support": True}
+                    for d in r]
+
+        def _dirs(*names):
+            extra = {"Téléchargements": "Downloads", "Vidéos": "Videos", "Images": "Pictures", "Bureau": "Desktop"}
+            res = []
+            for n in names:
+                for c in (n, extra.get(n, n)):
+                    if (HOME / c).is_dir() and HOME / c not in res:
+                        res.append(HOME / c)
+            return res
+
+        def trash(path):
+            return _W.corbeille(path)
+
+        def peripherals():
+            return []
+
+        def power_profile(set_to=None):
+            vers = {"power-saver": "economie", "balanced": "equilibre", "performance": "performance"}
+            if set_to:
+                _W.energie(vers.get(set_to, set_to))
+            k = _W.energie()
+            return {v: k2 for k2, v in vers.items()}.get(k) or None
+    except Exception:                                    # pragma: no cover
+        pass

@@ -397,7 +397,7 @@ def translate_prompt(prompt):
 
 def api_key():
     try:
-        return Path(KEY_FILE).read_text().strip()
+        return Path(KEY_FILE).read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
 

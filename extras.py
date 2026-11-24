@@ -550,7 +550,7 @@ def agenda_text(items, quand="aujourd'hui"):
 # ================================================================ surveillance du PC
 def _read(p):
     try:
-        return Path(p).read_text().strip()
+        return Path(p).read_text(encoding="utf-8", errors="replace").strip()
     except Exception:
         return ""
 
@@ -705,7 +705,7 @@ def apply_tidy(plan, log_file):
 
 def undo_tidy(log_file):
     try:
-        data = json.loads(Path(log_file).read_text())
+        data = json.loads(Path(log_file).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return 0
     n = 0

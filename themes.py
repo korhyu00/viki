@@ -277,7 +277,7 @@ def _fleches():
         import tempfile
         from PyQt6.QtCore import QPointF, Qt
         from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
-        d = os.path.join(tempfile.gettempdir(), "viki-fleches-%d" % os.getuid())
+        d = os.path.join(tempfile.gettempdir(), "viki-fleches-%s" % (os.getuid() if hasattr(os, "getuid") else os.environ.get("USERNAME", "w")))
         os.makedirs(d, exist_ok=True)
         for nom, pts in (("bas", ((4, 8), (10, 14), (16, 8))), ("haut", ((4, 12), (10, 6), (16, 12))),
                          ("bas_n", ((4, 8), (10, 14), (16, 8))), ("haut_n", ((4, 12), (10, 6), (16, 12)))):
@@ -325,12 +325,18 @@ def _fenetre_pomme(w):
         if w.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) and not (
                 habit is not None and id(w) in habit._H):
             return
-        s = _RX_POMME.sub("", w.styleSheet() or "")
+        s = w.styleSheet() or ""
+        if _cur != "rose" and w.property("theme_fait") != _cur:   # ses couleurs, dans le même calcul que nos blocs
+            w.setProperty("theme_fait", _cur)
+            s = css(s)
+        s = _RX_POMME.sub("", s)
+        if habit is not None and id(w) in habit._H and "/*habit*/" not in s:
+            s = s + habit.regle(w)              # fenêtre arrondie : le fond transparent, dans le même calcul
         if _cur != "contraste":                 # à la fin : les mêmes boutons partout (les #noms précis gardent les leurs)
             h = _RX_H.search(s)
             s = (s[:h.start()] + _fleches() + s[h.start():]) if h else s + "\n" + _fleches()
         if s != (w.styleSheet() or ""):
-            w.setStyleSheet(s)
+            w.setStyleSheet(s)                  # un seul recalcul du style pour toute la fenêtre
         if _cur != "contraste":                 # les petits boutons carrés (icônes) : pas de marge, sinon l'icône disparaît
             from PyQt6.QtWidgets import QPushButton
             for b in w.findChildren(QPushButton):
@@ -428,7 +434,7 @@ def install(app, name, custom=""):
     finally:
         EN_COURS = False
     if habit is not None and habit.ACTIF:
-        habit.installer()                       # fenêtres arrondies, sans le cadre du bureau
+        habit.installer(_fenetre_pomme)         # fenêtres arrondies : tout est préparé AVANT l'affichage
     if _filter is None:
         _filter = _Filter(app)
         app.installEventFilter(_filter)

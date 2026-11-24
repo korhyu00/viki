@@ -418,7 +418,7 @@ def photo_en_cache(nom):
     if not meta.exists():
         return None
     try:
-        m = json.loads(meta.read_text())
+        m = json.loads(meta.read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return None
     if m.get("fichier") and (d / m["fichier"]).exists():
@@ -451,9 +451,9 @@ def chercher_photo(nom):
             ext = ".png" if th.lower().endswith(".png") else ".jpg"
             (d / (cle + ext)).write_bytes(data)
             res = (str(d / (cle + ext)), "Wikipédia — " + pg.get("title", ""))
-            (d / (cle + ".json")).write_text(json.dumps({"fichier": cle + ext, "source": res[1]}))
+            (d / (cle + ".json")).write_text(json.dumps({"fichier": cle + ext, "source": res[1]}), encoding="utf-8")
             return res
-        (d / (cle + ".json")).write_text(json.dumps({"fichier": "", "source": ""}))
+        (d / (cle + ".json")).write_text(json.dumps({"fichier": "", "source": ""}), encoding="utf-8")
     except Exception:
         pass                                              # pas de réseau : on réessaiera une autre fois
     return res

@@ -241,7 +241,13 @@ def analyse_fichier(path):
                     out["alertes"].append(msg)
         except Exception:
             pass
-    if shutil.which("clamscan") and out["taille"] < 200_000_000:
+    if os.name == "nt" and out["taille"] < 500_000_000:      # Windows : l'antivirus intégré (Defender)
+        try:
+            import windows_outils as WO
+            out["clamav"] = WO.scanner(p)
+        except Exception:
+            pass
+    elif shutil.which("clamscan") and out["taille"] < 200_000_000:
         try:
             r = subprocess.run(["clamscan", "--no-summary", str(p)], capture_output=True, text=True, timeout=180)
             out["clamav"] = "virus trouvé : " + r.stdout.split(":")[-1].strip() if r.returncode == 1 else \

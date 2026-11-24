@@ -6,6 +6,7 @@ Le thème de curseur est un dossier « Viki » dans ~/.local/share/icons (fichie
 appliqué par les réglages du bureau après ton accord ; « Remettre mon curseur » remet l'ancien.
 """
 import json
+import sys
 import math
 import os
 import shutil
@@ -585,3 +586,19 @@ class Etoile(QWidget):
         p.setOpacity(0.75 + 0.25 * math.sin(self.phase))
         _coeur(p, QPointF(14, 15), 6.5)
         p.end()
+
+
+# ------------------------------------------------------------------ Windows : le même mode, avec l'API de Windows
+if sys.platform.startswith("win"):
+    try:
+        import curseur_windows as _W
+        activer, remettre, actif = _W.activer, _W.remettre, _W.actif
+        _dernier_message = _W._dernier
+
+        def actuel():
+            return NOM if _W.actif() else "windows"
+
+        def bureau():
+            return "windows"
+    except Exception:
+        pass

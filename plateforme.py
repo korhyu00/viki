@@ -20,6 +20,7 @@ from pathlib import Path
 IS_WIN = sys.platform == "win32"
 FROZEN = bool(getattr(sys, "frozen", False))
 notifier = None                      # fonction(titre, texte) donnée par l'appli (bulle de l'icône)
+_PLANTAGE = None
 _real_popen = subprocess.Popen
 _real_run = subprocess.run
 _real_which = shutil.which
@@ -439,8 +440,19 @@ def _handle(args, kwargs):
     return FakeProc("")
 
 
+def _chemin_complet(args):
+    """« tesseract … » -> « C:\\Program Files\\Tesseract-OCR\\tesseract.exe … » s'il n'est pas dans le PATH."""
+    if IS_WIN and isinstance(args, (list, tuple)) and args and str(args[0]) in CHEMINS_WIN \
+            and not _real_which(str(args[0])):
+        full = _which(str(args[0]))
+        if full:
+            return [full] + list(args[1:])
+    return args
+
+
 class _Popen:
     def __new__(cls, args, *a, **kw):
+        args = _chemin_complet(args)
         fake = _handle(args if isinstance(args, (list, tuple)) else [args], kw) if IS_WIN else None
         if fake is not None:
             return fake
@@ -452,6 +464,7 @@ class _Popen:
 
 
 def _run(args, *a, **kw):
+    args = _chemin_complet(args)
     fake = _handle(args if isinstance(args, (list, tuple)) else [args], kw) if IS_WIN else None
     if fake is not None:
         out = fake.stdout if isinstance(fake.stdout, str) else ""
@@ -461,7 +474,27 @@ def _run(args, *a, **kw):
     return _real_run(args, *a, **kw)
 
 
+# outils installés sous Windows hors du PATH : leurs dossiers habituels
+CHEMINS_WIN = {
+    "tesseract": [r"%ProgramFiles%\Tesseract-OCR\tesseract.exe", r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"],
+    "gpg": [r"%ProgramFiles(x86)%\GnuPG\bin\gpg.exe", r"%ProgramFiles%\GnuPG\bin\gpg.exe"],
+    "git": [r"%ProgramFiles%\Git\cmd\git.exe"],
+    "mpv": [r"%ProgramFiles%\mpv\mpv.exe", r"%LOCALAPPDATA%\Programs\mpv\mpv.exe"],
+    "ffmpeg": [r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe"],
+    "ollama": [r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"],
+}
+
+
 def _which(name, *a, **kw):
+    if IS_WIN and name not in HANDLED:
+        r = _real_which(name, *a, **kw)
+        if r:
+            return r
+        for c in CHEMINS_WIN.get(name, []):
+            c = os.path.expandvars(c)
+            if os.path.isfile(c):
+                return c
+        return None
     if IS_WIN and name in HANDLED:
         if name in ("pw-record", "parec"):
             try:
@@ -483,6 +516,17 @@ def install():
             f = open(os.devnull, "w")
         sys.stdout = sys.stdout or f
         sys.stderr = sys.stderr or f
+    if IS_WIN:                     # un plantage « natif » (sans message Python) : on note où, pour le corriger
+        try:
+            import faulthandler
+            d = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Viki"
+            d.mkdir(parents=True, exist_ok=True)
+            global _PLANTAGE
+            _PLANTAGE = open(d / "plantage.txt", "a", encoding="utf-8", buffering=1)
+            _PLANTAGE.write(f"\n===== lancement {time.strftime('%d/%m %H:%M:%S')}\n")
+            faulthandler.enable(file=_PLANTAGE, all_threads=True)
+        except Exception:
+            pass
     if not IS_WIN:
         return
     subprocess.Popen = _Popen

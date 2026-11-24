@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QGridLayout, QHBoxLayout, 
 CATS = [("parler", "💬", "Parler avec elle"), ("jour", "☀️", "Mon quotidien"), ("media", "🎬", "Musique et vidéos"),
         ("creer", "🎨", "Créer"), ("pc", "💻", "Travail et PC"), ("elle", "💜", "Elle")]
 DEFAUT = ["ecrire", "actu", "liste", "musique", "images", "pomodoro"]
+LINUX_SEUL = {"terminal", "permissions", "fenetres", "commit"}
 
 
 def _sa(t):
@@ -182,6 +183,8 @@ def actions(c):
         "salon serie film netflix disney prime spotify deezer regarder ce soir reprendre")
     add("bug", "🐞", "Signaler un bug", "elle", getattr(c, "signaler_bug", None),
         "bug probleme erreur signaler rapport github plantage aide")
+    if getattr(C, "IS_WIN", False):                # Windows : pas les fonctions qui n'existent que sous Linux
+        A = [a for a in A if a["id"] not in LINUX_SEUL]
     return A
 
 

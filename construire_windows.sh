@@ -59,7 +59,8 @@ ICON
 
 echo "=== 5/6 Fabrication du .exe (PyInstaller)"
 B="$W/app"; rm -rf "$B" && mkdir -p "$B"
-for f in compagnon.py extras.py visuel.py reglages.py lieux.py ecoute.py plateforme.py ia_api.py outils.py marionnette.py galerie.py live2d_rendu.py voix.py spine_rendu.py mails.py lecture.py apprentissage.py dev.py gestionpc.py manga.py i18n.py traductions.py themes.py streamer.py quotidien.py securite.py suivi.py vie.py devplus.py plus.py media.py atelier.py cerveau.py vieprivee.py liste.py raccourcis.py astuces.py pratique.py fun.py demarrage.py apparence.py; do cp "$f" "$B/"; done
+for f in *.py; do cp "$f" "$B/"; done                 # tous les modules (les nouveaux aussi)
+HIDDEN=(); for f in *.py; do m="${f%.py}"; [ "$m" = compagnon ] || HIDDEN+=(--hidden-import "$m"); done
 cp -r assets "$B/"; rm -rf "$B/assets/"*/original "$B/assets/original"
 rm -rf "$B/piper" && cp -r "$PIPER_DIR" "$B/piper"
 mkdir -p "$B/whispercpp" && cp "$WCPP_DIR"/whisper-cli.exe "$WCPP_DIR"/*.dll "$B/whispercpp/" && rm -f "$B/whispercpp/SDL2.dll"
@@ -68,9 +69,8 @@ mkdir -p "$B/voices"
 cd "$B"
 $RUN "$PY" -m PyInstaller --noconfirm --clean --windowed --name Viki --icon "Z:$W/icone.ico" \
     --paths "Z:$W/stubs" --hidden-import av \
-    --hidden-import extras --hidden-import visuel --hidden-import reglages --hidden-import lieux \
-    --hidden-import plateforme --hidden-import sounddevice \
-    --collect-data _sounddevice_data --collect-binaries _sounddevice_data \
+    "${HIDDEN[@]}" --hidden-import sounddevice --python-option "X utf8" \
+    --collect-data _sounddevice_data --collect-binaries _sounddevice_data --collect-all live2d --collect-all OpenGL \
     --add-data "assets;assets" --add-data "ecoute.py;." --add-data "piper;piper" --add-data "whispercpp;whispercpp" --add-data "voices;voices" \
     --exclude-module tkinter --exclude-module faster_whisper --exclude-module ctranslate2 --exclude-module PyQt6.QtQml --exclude-module PyQt6.QtQuick \
     --exclude-module PyQt6.QtMultimedia --exclude-module PyQt6.QtPdf --exclude-module PyQt6.Qt3DCore \
@@ -80,9 +80,8 @@ D="$B/dist/Viki"
 # même programme en version « console » : sert à l'oreille (reconnaissance vocale) et au diagnostic
 $RUN "$PY" -m PyInstaller --noconfirm --console --name Viki-console --distpath distc --workpath buildc \
     --icon "Z:$W/icone.ico" --paths "Z:$W/stubs" --hidden-import av \
-    --hidden-import extras --hidden-import visuel --hidden-import reglages --hidden-import lieux \
-    --hidden-import plateforme --hidden-import sounddevice \
-    --collect-data _sounddevice_data --collect-binaries _sounddevice_data \
+    "${HIDDEN[@]}" --hidden-import sounddevice --python-option "X utf8" \
+    --collect-data _sounddevice_data --collect-binaries _sounddevice_data --collect-all live2d --collect-all OpenGL \
     --add-data "assets;assets" --add-data "ecoute.py;." --add-data "piper;piper" --add-data "whispercpp;whispercpp" --add-data "voices;voices" \
     --exclude-module tkinter --exclude-module faster_whisper --exclude-module ctranslate2 --exclude-module PyQt6.QtQml --exclude-module PyQt6.QtQuick \
     --exclude-module PyQt6.QtMultimedia --exclude-module PyQt6.QtPdf --exclude-module PyQt6.Qt3DCore \

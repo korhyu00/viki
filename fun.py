@@ -40,24 +40,24 @@ def power_state(root="/sys/class/power_supply"):
     try:
         for d in Path(root).iterdir():
             try:
-                typ = (d / "type").read_text().strip()
+                typ = (d / "type").read_text(encoding="utf-8", errors="replace").strip()
             except Exception:
                 typ = "Battery" if d.name.startswith("BAT") else ""
             if typ == "Mains":
                 ac_seen = True
                 try:
-                    ac_on = ac_on or (d / "online").read_text().strip() == "1"
+                    ac_on = ac_on or (d / "online").read_text(encoding="utf-8", errors="replace").strip() == "1"
                 except Exception:
                     pass
             elif typ == "Battery" and (d / "capacity").exists():
                 try:
-                    if (d / "scope").read_text().strip() == "Device":       # souris, manette : on ignore
+                    if (d / "scope").read_text(encoding="utf-8", errors="replace").strip() == "Device":       # souris, manette : on ignore
                         continue
                 except Exception:
                     pass
                 try:
-                    pct = int((d / "capacity").read_text().strip())
-                    if (d / "status").read_text().strip() == "Discharging":
+                    pct = int((d / "capacity").read_text(encoding="utf-8", errors="replace").strip())
+                    if (d / "status").read_text(encoding="utf-8", errors="replace").strip() == "Discharging":
                         on_bat = True
                 except Exception:
                     pass
@@ -297,7 +297,7 @@ class Games:
     def __init__(self, path=None):
         self.path = Path(path or STATE_FILE or "jeux.json")
         try:
-            self.s = json.loads(self.path.read_text())
+            self.s = json.loads(self.path.read_text(encoding="utf-8", errors="replace"))
         except Exception:
             self.s = {}
         self.s.setdefault("jeux", {})
@@ -362,7 +362,7 @@ class Games:
             for wk in sorted(self.s["semaine"])[:-10]:
                 del self.s["semaine"][wk]
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self.s, ensure_ascii=False))
+            self.path.write_text(json.dumps(self.s, ensure_ascii=False), encoding="utf-8")
             os.chmod(self.path, 0o600)
             self.dirty = False
         except Exception:

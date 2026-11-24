@@ -232,7 +232,7 @@ class Wizard(QDialog):
             it.setData(Qt.ItemDataRole.UserRole, str(d))
             try:
                 import json
-                first = json.loads((Path(d) / "character.json").read_text()).get("image", "")
+                first = json.loads((Path(d) / "character.json").read_text(encoding="utf-8", errors="replace")).get("image", "")
             except Exception:
                 first = ""
             for img in (first, "thumb.png", "character.png", "base.png"):

@@ -238,3 +238,24 @@ def make_window(comp):
                 self.res.setText(f"❌ {r}" if isinstance(r, Exception) else r[1])
             comp._bg(lambda: test_fichier(path, st), done)
     return Win()
+
+
+if os.name == "nt":                                       # Windows : les lecteurs (C:, D:, clés USB…)
+    def volumes():
+        import shutil
+        try:
+            import windows_outils as _W
+            lettres = _W.lecteurs((2, 3))
+        except Exception:
+            lettres = ["C:\\"]
+        out = []
+        for d in lettres:
+            try:
+                u = shutil.disk_usage(d)
+            except Exception:
+                continue
+            if u.total < (1 << 30):
+                continue
+            out.append({"point": d, "type": "ntfs", "total": u.total, "libre": u.free,
+                        "pct": round(100 * (1 - u.free / u.total))})
+        return out

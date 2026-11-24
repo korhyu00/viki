@@ -235,7 +235,7 @@ def check_ssh_keys():
 
 def check_root_accounts():
     try:
-        uid0 = [l.split(":")[0] for l in Path("/etc/passwd").read_text().splitlines()
+        uid0 = [l.split(":")[0] for l in Path("/etc/passwd").read_text(encoding="utf-8", errors="replace").splitlines()
                 if l and l.split(":")[2] == "0" and l.split(":")[0] != "root"]
     except Exception:
         return None
@@ -303,7 +303,40 @@ def check_viki_secrets(paths=()):
 
 # ================================================================== Windows (vérifications de base)
 def _ps(cmd, timeout=20):
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd], timeout)
+    try:
+        import windows_outils as WO                          # sortie lue en UTF-8 (accents de Windows en français)
+        return WO.ps(cmd, timeout)
+    except Exception:
+        return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd], timeout)
+
+
+def windows_ports():
+    try:
+        import windows_outils as WO
+        ps_ = WO.ports()
+    except Exception:
+        return None
+    expo = {}
+    for p in ps_:
+        if p["addr"].startswith("127.") or p["addr"] in ("::1",):
+            continue
+        if p["proto"] == "udp" and p["port"] in (5353, 5355, 1900, 137, 138, 68, 546) or p["port"] in (135, 49664,
+                                                                                                         49665, 49666,
+                                                                                                         49667, 49668):
+            continue                                          # le fonctionnement normal de Windows
+        if p["port"] >= 49664 and p["prog"] in ("svchost", "lsass", "wininit", "services", "spoolsv", "System"):
+            continue
+        expo.setdefault(p["port"], (p["proto"], p["prog"]))
+    if not expo:
+        return _p("ok", "Aucun service inattendu ouvert sur le réseau", "Seuls les services normaux de Windows écoutent.")
+    lignes = [f"• port {k} ({v[0]}) — {PORTS.get(k, 'service inconnu')}" + (f", programme : {v[1]}" if v[1] else "")
+              for k, v in sorted(expo.items())]
+    risky = [k for k in expo if k in RISQUES]
+    return _p("attention" if risky else "conseil", f"{len(expo)} service(s) joignable(s) depuis le réseau",
+              "Ces programmes acceptent des connexions des autres appareils :\n" + "\n".join(lignes),
+              "Les ports ⚠️ (partage de fichiers, bureau à distance, bases de données, Ollama…) ne devraient pas être "
+              "ouverts au réseau sauf si tu en as besoin. Le pare-feu Windows les protège s'il est actif."
+              if risky else "Si tu ne reconnais pas un programme, regarde l'onglet « Ports » pour l'arrêter.")
 
 
 def windows_checks():
@@ -335,6 +368,34 @@ def windows_checks():
     if txt.strip() == "0":
         out.append(_p("attention", "Bureau à distance activé", "D'autres appareils peuvent essayer de se connecter "
                       "à ton PC.", "Paramètres → Système → Bureau à distance → désactive-le si tu ne t'en sers pas."))
+    code, txt = _ps("Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\"
+                    "RebootRequired'")
+    if txt.strip() == "True":
+        out.append(_p("attention", "Redémarrage en attente", "Windows a installé des mises à jour de sécurité qui ne "
+                      "s'appliquent qu'après un redémarrage.", "Redémarre ton PC quand tu peux."))
+    code, txt = _ps("(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer' "
+                    "-ErrorAction SilentlyContinue).SmartScreenEnabled")
+    if txt.strip().lower() == "off":
+        out.append(_p("attention", "SmartScreen désactivé", "Windows ne te prévient plus avant de lancer un "
+                      "programme téléchargé inconnu.", "Sécurité Windows → Contrôle des applications et du "
+                      "navigateur → réactive « Vérifier les applications et les fichiers »."))
+    try:
+        r = windows_ports()
+        if r:
+            out.append(r)
+    except Exception:
+        pass
+    try:
+        import windows_outils as WO
+        maj = WO.mises_a_jour()
+        if maj:
+            out.append(_p("conseil", f"{len(maj)} logiciel(s) à mettre à jour",
+                          "Des mises à jour existent pour : " + ", ".join(maj[:8]) + ("…" if len(maj) > 8 else "") + ".",
+                          "Dis-moi « mets à jour mes logiciels » (winget), ou mets-les à jour toi-même."))
+        elif maj == []:
+            out.append(_p("ok", "Logiciels à jour", "winget ne trouve aucune mise à jour en attente."))
+    except Exception:
+        pass
     if not out:
         out.append(_p("conseil", "Vérification limitée", "Je n'ai pas pu interroger Windows (PowerShell)."))
     return out
@@ -367,6 +428,26 @@ def bilan_rapide():
     """Pour la tuile « Santé du PC » : quelques vérifications rapides et hors ligne.
     -> [(niveau, texte court)] ; niveau : ok | attention | danger."""
     out = []
+    if IS_WIN:
+        try:
+            import windows_outils as WO
+            on, coupes = WO.pare_feu()
+            if on is not None:
+                out.append(("ok" if on else "attention", "Pare-feu : " + ("actif" if on else "coupé pour " + ", ".join(coupes))))
+            av = WO.antivirus()
+            if av:
+                out.append(("ok" if av["temps_reel"] else "danger",
+                            "Antivirus : " + ("protection active" if av["temps_reel"] else "protection en temps réel coupée")))
+            for d in WO.lecteurs():
+                u = shutil.disk_usage(d)
+                libre = u.free / u.total
+                if libre < 0.05:
+                    out.append(("danger", f"Disque {d[:2]} : presque plein ({u.free / 1e9:.0f} Go libres)"))
+                elif libre < 0.12:
+                    out.append(("attention", f"Disque {d[:2]} : bien rempli ({u.free / 1e9:.0f} Go libres)"))
+        except Exception:
+            pass
+        return out
     for f, court in ((check_firewall, "Pare-feu"), (lambda: check_updates(False), "Mises à jour"),
                      (check_reboot, "Redémarrage")):
         try:

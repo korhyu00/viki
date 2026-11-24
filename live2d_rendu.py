@@ -33,6 +33,26 @@ def available():
         return False, _err
 
 
+def verifier_opengl(ctx):
+    """Le moteur Live2D a besoin d'OpenGL 2.1 au moins. Sous Windows, sans le pilote de la carte graphique
+    (« Microsoft Basic Display Adapter » ou « GDI Generic »), il n'y a qu'OpenGL 1.1 : le moteur plante net."""
+    try:
+        ver = (_GL.glGetString(_GL.GL_VERSION) or b"").decode("utf-8", "replace")
+        ren = (_GL.glGetString(_GL.GL_RENDERER) or b"").decode("utf-8", "replace")
+    except Exception:
+        ver = ren = ""
+    maj, mi = ctx.format().majorVersion(), ctx.format().minorVersion()
+    m = re.match(r"\s*(\d+)\.(\d+)", str(ver))
+    if m:
+        maj, mi = int(m.group(1)), int(m.group(2))
+    if "gdi generic" in str(ren).lower() or (maj, mi) < (2, 1):
+        raise RuntimeError(f"ta carte graphique n'offre que OpenGL {maj}.{mi} ({ren or 'pilote inconnu'}) : "
+                           "il manque sûrement son pilote. Installe le pilote de ta carte graphique (site d'AMD, "
+                           "ou Windows Update), puis réessaie.")
+    return f"{ver} — {ren}"
+
+
+
 def _context():
     """Contexte OpenGL partagé, sans fenêtre visible."""
     global _ctx, _surf
@@ -50,6 +70,7 @@ def _context():
         surf.create()
         if not ctx.makeCurrent(surf):
             raise RuntimeError("OpenGL : impossible d'activer le contexte")
+        verifier_opengl(ctx)                             # avant le moteur : un vieux pilote le ferait planter
         _live2d.init()
         _live2d.glInit()
         _ctx, _surf = ctx, surf

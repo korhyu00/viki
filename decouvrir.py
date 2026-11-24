@@ -94,6 +94,9 @@ SYNONYMES = {
 }
 
 
+LINUX_SEUL = {"terminal", "commit"}
+
+
 def catalogue(lang="fr", simple=False):
     """-> [{"id", "cat", "ico", "titre", "phrase", "montre", "mode", "remplir", "action", "mots", "d"}]."""
     out = []
@@ -112,8 +115,10 @@ def catalogue(lang="fr", simple=False):
                         "action": None, "d": a.get("d", ""),
                         "mots": _sa(" ".join([ex, a["t"]["fr"], titre, SYNONYMES.get(a["id"], "")] + kw
                                              + (a.get("kw") or {}).get("en", [])))})
+    import sys
+    win = sys.platform.startswith("win")
     for id_, cat, ico, titre, phrase, mode, tech, act in EXTRA:
-        if simple and tech:
+        if (simple and tech) or (win and id_ in LINUX_SEUL):
             continue
         out.append({"id": id_, "cat": cat, "ico": ico, "titre": tr(titre), "phrase": phrase,
                     "montre": tr(phrase) if mode != "action" else tr(titre), "mode": mode,

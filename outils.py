@@ -598,7 +598,7 @@ class TidyDialog(QDialog):
 
 def undo_plan(log_file):
     try:
-        data = json.loads(Path(log_file).read_text())
+        data = json.loads(Path(log_file).read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return 0
     n = 0

@@ -44,6 +44,9 @@ PAGES = [
 ]
 
 
+WIN = __import__("sys").platform.startswith("win")   # Windows : la roue s'ouvre avec Win+Alt+…
+
+
 class Icone(QWidget):
     def __init__(self, police, parent=None):
         super().__init__(parent)
@@ -169,7 +172,7 @@ class Tuto(QWidget):
         code, coul, titre, texte, act = PAGES[self.i]
         self.ico.regler(code, coul)
         self.titre.setText(tr(titre))
-        self.texte.setText(tr(texte))
+        self.texte.setText(tr(texte).replace("Meta+Alt+", "Win+Alt+") if WIN else tr(texte))
         self.b_essai.setText(tr("Essayer") + " →")
         self.b_essai.setVisible(bool(act))
         self.points.i = self.i

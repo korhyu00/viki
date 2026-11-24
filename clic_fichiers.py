@@ -132,3 +132,67 @@ def a_jour():
 def installe():
     return (KDE6 / "viki-textes.desktop").exists() or NAUTILUS.exists() or any(NEMO.glob("viki-*.nemo_action")) \
         if NEMO.exists() else (KDE6 / "viki-textes.desktop").exists() or NAUTILUS.exists()
+
+
+# ================================================================== Windows : le clic droit de l'Explorateur
+if os.name == "nt":
+    import sys
+    import winreg
+
+    CLES = [(r"Software\Classes\*\shell\Viki", [a for a in ACTIONS if a[3] is not True]),
+            (r"Software\Classes\SystemFileAssociations\image\shell\VikiImage", [a for a in ACTIONS if a[3] is True])]
+
+    def _exe():
+        if getattr(sys, "frozen", False):
+            return f'"{sys.executable}"'
+        here = Path(__file__).resolve().parent
+        py = sys.executable.replace("python.exe", "pythonw.exe")
+        return f'"{py}" "{here / "compagnon.py"}"'
+
+    def _effacer(chemin):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, chemin, 0, winreg.KEY_ALL_ACCESS) as k:
+                while True:
+                    try:
+                        sous = winreg.EnumKey(k, 0)
+                    except OSError:
+                        break
+                    _effacer(chemin + "\\" + sous)
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, chemin)
+        except OSError:
+            pass
+
+    def installer():
+        exe = _exe()
+        ico = sys.executable if getattr(sys, "frozen", False) else ""
+        for cle, acts in CLES:
+            _effacer(cle)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cle) as k:
+                winreg.SetValueEx(k, "MUIVerb", 0, winreg.REG_SZ, "Viki" if "Image" not in cle else "Viki (image)")
+                winreg.SetValueEx(k, "SubCommands", 0, winreg.REG_SZ, "")
+                if ico:
+                    winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, ico)
+            for i, (a, nom, _ico, _img) in enumerate(acts):
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{cle}\\shell\\{i:02d}{a}") as k:
+                    winreg.SetValueEx(k, "MUIVerb", 0, winreg.REG_SZ, tr(nom))
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{cle}\\shell\\{i:02d}{a}\\command") as k:
+                    winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'{exe} fichier {a} "%1"')
+        return ["l'Explorateur de fichiers (Windows 11 : « Afficher d'autres options »)"]
+
+    def retirer():
+        for cle, _acts in CLES:
+            _effacer(cle)
+
+    def installe():
+        try:
+            winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLES[0][0]).Close()
+            return True
+        except OSError:
+            return False
+
+    def a_jour():
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLES[0][0] + "\\shell\\00resumer\\command") as k:
+                return _exe() in winreg.QueryValueEx(k, "")[0]
+        except OSError:
+            return True

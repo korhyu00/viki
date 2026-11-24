@@ -18,6 +18,10 @@ Bazaar and updates there):
 flatpak install --user https://korhyu00.github.io/viki-flatpak/viki.flatpakref
 ```
 
+**Windows 10/11 (beta):** [⬇️ Viki-Windows.zip](https://github.com/korhyu00/viki/releases/latest/download/Viki-Windows.zip)
+— unzip it anywhere, then double-click `Viki.exe`. This version is still being tested: animated Live2D models
+can fail on older graphics cards, and some Linux-only tools are hidden.
+
 ## Run
 
 1. Right-click the downloaded file → **Properties** → **Permissions** → tick "Allow executing file as program".

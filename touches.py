@@ -186,7 +186,7 @@ def _kde(actions, retirer=False):
             continue
         f.write_text("[Desktop Entry]\nType=Application\nName=Viki — " + nom + "\nExec=" + lanceur() + " " + opt +
                      "\nIcon=viki\nNoDisplay=true\nX-KDE-GlobalAccel-CommandShortcut=true\n"
-                     "X-KDE-Shortcuts=" + combo + "\n")
+                     "X-KDE-Shortcuts=" + combo + "\n", encoding="utf-8")
         if kw:
             ok = _run([kw, "--file", "kglobalshortcutsrc", "--group", "services", "--group", f.name, "--key",
                        "_launch", combo])[0] == 0 and ok

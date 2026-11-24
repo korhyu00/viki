@@ -88,7 +88,7 @@ def upscale_character(cdir, make_hitmask, progress=None):
     """Rend tout un personnage (image de base, tenues, expressions) 2 fois plus net.
     Une copie de l'original est gardée dans original/ (pour annuler)."""
     cdir = Path(cdir)
-    data = json.loads((cdir / "character.json").read_text())
+    data = json.loads((cdir / "character.json").read_text(encoding="utf-8", errors="replace"))
     if data.get("nettete"):
         raise RuntimeError("Ce personnage est déjà en haute qualité.")
     backup = cdir / "original"
@@ -103,7 +103,7 @@ def upscale_character(cdir, make_hitmask, progress=None):
     for tj in sorted((cdir / "tenues").glob("*/tenue.json")) if (cdir / "tenues").exists() else []:
         jobs.append((tj, tj.parent))
     for i, (jf, d) in enumerate(jobs):
-        cal = json.loads(jf.read_text())
+        cal = json.loads(jf.read_text(encoding="utf-8", errors="replace"))
         img = d / cal.get("image", "character.png")
         if progress:
             progress(f"Netteté : image {i + 1} sur {len(jobs)}…")
@@ -119,7 +119,7 @@ def upscale_character(cdir, make_hitmask, progress=None):
                     q = QImage(str(pp))
                     q.scaled(q.width() * f, q.height() * f, Qt.AspectRatioMode.IgnoreAspectRatio,
                              Qt.TransformationMode.SmoothTransformation).save(str(pp))
-        jf.write_text(json.dumps(cal, indent=2, ensure_ascii=False))
+        jf.write_text(json.dumps(cal, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(jobs)
 
 

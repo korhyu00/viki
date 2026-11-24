@@ -56,7 +56,7 @@ def habiller(w):
     try:
         fixe = w.minimumSize() == w.maximumSize() and w.minimumWidth() > 0
         taille = w.size()
-        w.setWindowFlags(w.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        w.overrideWindowFlags(w.windowFlags() | Qt.WindowType.FramelessWindowHint)   # sans tout recalculer
         w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         w.setAutoFillBackground(False)
         lay = w.layout()
@@ -77,12 +77,15 @@ def habiller(w):
         pass
 
 
+def regle(w):
+    return "\n/*habit*/ QWidget#%s { background: transparent; border: none; } /*finhabit*/" % w.objectName()
+
+
 def _feuille(w):
     s = w.styleSheet() or ""
     if "/*habit*/" in s:
         return
-    w.setStyleSheet(_RX.sub("", s) + "\n/*habit*/ QWidget#%s { background: transparent; border: none; } /*finhabit*/"
-                    % w.objectName())
+    w.setStyleSheet(_RX.sub("", s) + regle(w))
 
 
 def montrer(w):
@@ -94,8 +97,15 @@ def montrer(w):
         _placer(w, b)
         b.show()
         scr = w.screen().availableGeometry() if w.screen() else None
-        if scr is not None and (w.width() > scr.width() or w.height() > scr.height()):
-            w.resize(min(w.width(), scr.width()), min(w.height(), scr.height()))
+        if scr is not None:                        # toujours entière dans l'écran (petits écrans, zoom 125-150 %)
+            mw, mh = int(scr.width() * 0.96), int(scr.height() * 0.96)
+            if w.width() > mw or w.height() > mh:
+                w.resize(max(w.minimumWidth(), min(w.width(), mw)), max(w.minimumHeight(), min(w.height(), mh)))
+            g = w.frameGeometry()
+            if not scr.contains(g):
+                x = min(max(scr.left(), g.left()), scr.right() - g.width())
+                y = min(max(scr.top(), g.top()), scr.bottom() - g.height())
+                w.move(max(scr.left(), x), max(scr.top(), y))
     except Exception:
         pass
 
@@ -326,26 +336,41 @@ class Barre(QWidget):
 _PATCH = []
 
 
-def installer():
+PREPARER = [None]
+
+
+def _avant(self):
+    """Avant le premier affichage : cadre arrondi + style complet en une fois (rapide : rien n'est encore poli)."""
+    if not ACTIF:
+        return
+    neuf = id(self) not in _H
+    habiller(self)
+    if neuf and id(self) in _H and PREPARER[0] is not None:
+        try:
+            PREPARER[0](self)
+        except Exception:
+            pass
+
+
+def installer(preparer=None):
     """Habille chaque fenêtre au moment où on l'affiche (avant que le bureau ne la crée)."""
+    if preparer is not None:
+        PREPARER[0] = preparer
     if _PATCH:
         return
     from PyQt6.QtWidgets import QDialog
     orig_show, orig_exec, orig_open = QWidget.show, QDialog.exec, QDialog.open
 
     def show(self):
-        if ACTIF:
-            habiller(self)
+        _avant(self)
         return orig_show(self)
 
     def exec_(self):
-        if ACTIF:
-            habiller(self)
+        _avant(self)
         return orig_exec(self)
 
     def open_(self):
-        if ACTIF:
-            habiller(self)
+        _avant(self)
         return orig_open(self)
 
     QWidget.show, QDialog.exec, QDialog.open = show, exec_, open_

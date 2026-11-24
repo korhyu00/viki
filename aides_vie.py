@@ -318,3 +318,29 @@ def texte_rapide(cle, table):
         if c.lower() == k:
             return v
     return None
+
+
+# ================================================================== Windows : les mêmes aides
+if os.name == "nt":
+    try:
+        import windows_outils as _W
+
+        def en_appel():
+            return _W.en_appel()
+
+        def fichiers_recents(heures=36, maxi=8):
+            return _W.fichiers_recents(heures, maxi)
+
+        def qui_port(n):
+            res = [(p["prog"] or "?", p["pid"] or None, p["proto"].upper()) for p in _W.ports() if p["port"] == int(n)]
+            vus, out = set(), []
+            for x in res:
+                if x not in vus:
+                    vus.add(x)
+                    out.append(x)
+            return out
+
+        def hote(cmd, timeout=8):
+            return _W.run(cmd, timeout)
+    except Exception:                                    # pragma: no cover
+        pass
