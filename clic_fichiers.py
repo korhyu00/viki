@@ -17,7 +17,10 @@ except Exception:                                   # pragma: no cover
 
 import touches
 
-DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+if os.path.exists("/.flatpak-info"):          # dans le Flatpak, XDG_DATA_HOME est celui de la boîte : on veut celui du bureau
+    DATA = Path(os.environ.get("HOST_XDG_DATA_HOME") or Path.home() / ".local" / "share")
+else:
+    DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
 KDE6 = DATA / "kio" / "servicemenus"
 KDE5 = DATA / "kservices5" / "ServiceMenus"
 NAUTILUS = DATA / "nautilus" / "scripts" / "Viki"
@@ -70,7 +73,19 @@ def installer():
         _exe(d / "viki-textes.desktop", _kde_fichier(False))
         _exe(d / "viki-images.desktop", _kde_fichier(True))
         _exe(d / "viki-tous.desktop", _kde_fichier(None))
-    if shutil.which("dolphin") or shutil.which("konqueror"):
+    if touches.FLATPAK:                              # le Flatpak ne voit pas les programmes du bureau : on demande à l'hôte
+        hote = lambda prog: touches._run(["flatpak-spawn", "--host", "sh", "-c", f"command -v {prog}"])[0] == 0
+        if hote("dolphin") or hote("konqueror"):
+            faits.append("Dolphin")
+            for k in ("kbuildsycoca6", "kbuildsycoca5"):
+                if hote(k):
+                    touches._run(["flatpak-spawn", "--host", k], timeout=30)
+                    break
+        if hote("nautilus"):
+            NAUTILUS.parent.mkdir(parents=True, exist_ok=True)
+        if hote("nemo"):
+            NEMO.mkdir(parents=True, exist_ok=True)
+    elif shutil.which("dolphin") or shutil.which("konqueror"):
         faits.append("Dolphin")
         for k in ("kbuildsycoca6", "kbuildsycoca5"):
             if shutil.which(k):
@@ -104,6 +119,14 @@ def retirer():
             f.unlink()
         except OSError:
             pass
+
+
+def a_jour():
+    """Les menus déjà installés pointent-ils vers le bon lanceur ?"""
+    try:
+        return touches.lanceur() in (KDE6 / "viki-textes.desktop").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return True
 
 
 def installe():

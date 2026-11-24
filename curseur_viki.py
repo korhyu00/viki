@@ -391,12 +391,15 @@ ACTIONS = [
     ("ecrire", "✏️", "Lui écrire"),
     ("zone", "🔲", "Traduire une zone"),
 ]
+GLYPHES = {"quoi": 0xedeb, "copier": 0xea7a, "traduire": 0xebbe, "couleur": 0xeb01, "montre": 0xef4f,
+           "ecrire": 0xeaed, "zone": 0xfcc3}       # pictogrammes Tabler (comme ses ronds)
 
 
 class Roue(QWidget):
     choisi = pyqtSignal(str)
 
-    def __init__(self, centre):
+    def __init__(self, centre, police="", survol_son=None, clic_son=None):
+        self.police, self.survol_son, self.clic_son = police, survol_son, clic_son
         super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -406,6 +409,7 @@ class Roue(QWidget):
         self.resize(taille, taille)
         self.move(int(centre.x() - taille / 2), int(centre.y() - taille / 2))
         self.survol = -1
+        self.centre_mode = "retour"        # « retour » : bouton ↩ au centre ; « visage » : son visage, ↩ au survol
         self.k = 0.0
         self.setMouseTracking(True)
         self.t = QTimer(self)
@@ -425,6 +429,9 @@ class Roue(QWidget):
         return QPointF(c.x() + self.R * e * math.cos(a), c.y() + self.R * e * math.sin(a))
 
     def _sous(self, pt):
+        c = QPointF(self.width() / 2, self.height() / 2)
+        if (pt.x() - c.x()) ** 2 + (pt.y() - c.y()) ** 2 <= 24 ** 2:
+            return -2                                          # le bouton retour, au centre
         for i in range(len(ACTIONS)):
             q = self._pos(i)
             if (pt.x() - q.x()) ** 2 + (pt.y() - q.y()) ** 2 <= (self.r + 4) ** 2:
@@ -435,12 +442,27 @@ class Roue(QWidget):
         s = self._sous(e.position())
         if s != self.survol:
             self.survol = s
+            if s != -1 and self.survol_son:
+                try:
+                    self.survol_son()
+                except Exception:
+                    pass
             self.update()
 
     def mousePressEvent(self, e):
         i = self._sous(e.position())
         self.close()
+        if i == -2 and self.clic_son:
+            try:
+                self.clic_son()
+            except Exception:
+                pass
         if i >= 0:
+            if self.clic_son:
+                try:
+                    self.clic_son()
+                except Exception:
+                    pass
             self.choisi.emit(ACTIONS[i][0])
 
     def keyPressEvent(self, e):
@@ -452,44 +474,74 @@ class Roue(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         c = QPointF(self.width() / 2, self.height() / 2)
         p.setOpacity(self.k)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(20, 14, 26, 120))
-        p.drawEllipse(c, self.R + self.r + 8, self.R + self.r + 8)
-        if self.survol < 0:
-            img = AVATAR["img"]
-            if img is not None:                                # le visage de Viki au centre de la roue
-                path = QPainterPath()
-                path.addEllipse(c, 20, 20)
-                p.save()
-                p.setClipPath(path)
-                p.drawImage(QRectF(c.x() - 20, c.y() - 20, 40, 40), img)
-                p.restore()
-                p.setPen(QPen(QColor("white"), 2))
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawEllipse(c, 20, 20)
+        p.setPen(QPen(QColor(255, 255, 255, 60), 1.2))            # un anneau de verre dépoli, comme ses ronds
+        p.setBrush(QColor(30, 32, 40, 110))
+        p.drawEllipse(c, self.R + self.r + 10, self.R + self.r + 10)
+        img = AVATAR["img"]
+        sur_c = self.survol == -2
+        if self.centre_mode == "visage" and not sur_c and img is not None:   # son visage ; ↩ quand on passe dessus
+            path = QPainterPath()
+            path.addEllipse(c, 22, 22)
+            p.save()
+            p.setClipPath(path)
+            p.drawImage(QRectF(c.x() - 22, c.y() - 22, 44, 44), img)
+            p.restore()
+            p.setPen(QPen(QColor("white"), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(c, 22, 22)
+        else:                                                   # le bouton retour, comme les autres ronds
+            rr = 22 + (2 if sur_c else 0)
+            p.setPen(QPen(QColor(255, 255, 255, 175 if sur_c else 125), 1.4))
+            p.setBrush(QColor(255, 255, 255, 70) if sur_c else QColor(30, 32, 40, 170))
+            p.drawEllipse(c, rr, rr)
+            box = QRectF(c.x() - 22, c.y() - 22, 44, 44)
+            p.setPen(QColor(255, 255, 255))
+            if self.police:
+                fi = QFont(self.police)
+                fi.setPixelSize(20)
+                p.setFont(fi)
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, chr(0xeb77))      # flèche retour (Tabler)
             else:
-                _coeur(p, c, 9)
+                fi = QFont()
+                fi.setPixelSize(18)
+                p.setFont(fi)
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, "↩")
         f = QFont()
-        for i, (_id, ico, nom) in enumerate(ACTIONS):
+        for i, (aid, ico, nom) in enumerate(ACTIONS):
             q = self._pos(i)
             on = i == self.survol
-            p.setPen(QPen(QColor(255, 255, 255, 200), 2))
-            p.setBrush(ROSE if on else QColor(46, 30, 52, 235))
-            p.drawEllipse(q, self.r + (3 if on else 0), self.r + (3 if on else 0))
-            f.setPixelSize(20)
-            p.setFont(f)
-            p.setPen(QColor("white"))
-            p.drawText(QRectF(q.x() - self.r, q.y() - self.r, 2 * self.r, 2 * self.r), Qt.AlignmentFlag.AlignCenter, ico)
-        if self.survol >= 0:                                   # le nom de l'action au centre, en bas
+            rr = self.r + (2.5 if on else 0)
+            p.setPen(QPen(QColor(255, 255, 255, 175 if on else 125), 1.4))
+            p.setBrush(QColor(30, 32, 40, 150) if not on else QColor(255, 255, 255, 70))
+            p.drawEllipse(q, rr, rr)
+            if on:                                        # le reflet du survol
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 255, 255, 40))
+                p.drawEllipse(q, rr - 3, rr - 3)
+            code = GLYPHES.get(aid)
+            box = QRectF(q.x() - self.r, q.y() - self.r, 2 * self.r, 2 * self.r)
+            p.setPen(QColor(255, 255, 255))
+            if code and self.police:
+                fi = QFont(self.police)
+                fi.setPixelSize(22)
+                p.setFont(fi)
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, chr(code))
+            else:
+                f.setPixelSize(20)
+                p.setFont(f)
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, ico)
+        if self.survol != -1:                                  # le nom de l'action, sous le centre
             f.setPixelSize(12)
             f.setBold(True)
             p.setFont(f)
-            txt = tr(ACTIONS[self.survol][2])
-            box = QRectF(c.x() - 62, c.y() - 13, 124, 26)
+            txt = tr("Retour") if self.survol == -2 else tr(ACTIONS[self.survol][2])
+            box = QRectF(c.x() - 62, c.y() + 30, 124, 26)
             path = QPainterPath()
-            path.addRoundedRect(box, 12, 12)
-            p.fillPath(path, QColor(20, 14, 26, 230))
-            p.setPen(QColor("white"))
+            path.addRoundedRect(box, 13, 13)
+            p.fillPath(path, QColor(34, 36, 44, 225))
+            p.setPen(QPen(QColor(255, 255, 255, 70), 1))
+            p.drawPath(path)
+            p.setPen(QColor("#f5f5f7"))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
         p.end()
 

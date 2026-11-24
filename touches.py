@@ -22,9 +22,37 @@ ACTIONS = [
 PREFIXE = "viki-raccourci-"
 
 
+FLATPAK = os.path.exists("/.flatpak-info")
+# un petit script toujours au même endroit, réécrit à chaque lancement de Viki : le clic droit des fichiers,
+# le démarrage avec le PC et les raccourcis clavier passent par lui, donc ils marchent encore quand l'AppImage
+# est déplacée, renommée (« Viki-x86_64(1).AppImage »…) ou remplacée par une nouvelle version.
+STABLE = Path.home() / ".local" / "share" / "viki" / "lancer.sh"
+
+
+def preparer_lanceur():
+    """Écrit (ou met à jour) le script stable. -> son chemin, ou None."""
+    try:
+        reel = lanceur_reel()
+        contenu = ("#!/bin/sh\n# Lance (ou réveille) Viki. Réécrit par Viki à chaque démarrage : ne pas modifier.\n"
+                   f"exec {reel} \"$@\"\n")
+        STABLE.parent.mkdir(parents=True, exist_ok=True)
+        if not STABLE.exists() or STABLE.read_text(encoding="utf-8", errors="ignore") != contenu:
+            STABLE.write_text(contenu, encoding="utf-8")
+        STABLE.chmod(0o755)
+        return STABLE
+    except Exception:
+        return None
+
+
 def lanceur():
-    """La commande qui lance (ou réveille) Viki."""
-    if os.path.exists("/.flatpak-info"):
+    """La commande qui lance (ou réveille) Viki, vue depuis le bureau (fichiers de menu, raccourcis…)."""
+    if STABLE.exists() and os.access(STABLE, os.X_OK):
+        return shlex.quote(str(STABLE))
+    return lanceur_reel()
+
+
+def lanceur_reel():
+    if FLATPAK:
         return "flatpak run io.github.korhyu00.Viki"
     if os.environ.get("APPIMAGE"):
         return shlex.quote(os.environ["APPIMAGE"])

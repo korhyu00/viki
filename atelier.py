@@ -17,9 +17,9 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QPixmap
-from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
+from PyQt6.QtWidgets import (QApplication, QLayout, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
                              QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QProgressBar, QPushButton,
                              QScrollArea, QSpinBox, QTabWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
@@ -818,7 +818,7 @@ except Exception:
 CSS = """
 QWidget#atelier { font-size: 10.5pt; }
 QTextEdit#prompt { font-size: 12pt; padding: 6px; border-radius: 10px; }
-QPushButton#chip { border-radius: 14px; padding: 5px 12px; }
+QPushButton#chip { border-radius: 12px; padding: 5px 12px; }
 QPushButton#chip:checked { font-weight: bold; border: 2px solid palette(highlight); }
 QPushButton#creer { font-size: 13pt; font-weight: bold; padding: 10px; border-radius: 12px;
                     background: palette(highlight); color: palette(highlighted-text); border: none; }
@@ -827,6 +827,61 @@ QFrame#carte { border: 1px solid palette(mid); border-radius: 12px; }
 QLabel#aide { color: palette(placeholder-text); }
 QLabel#titre { font-size: 12pt; font-weight: bold; }
 """
+
+
+class Flux(QLayout):
+    """Les puces qui passent à la ligne toutes seules quand la place manque (rien n'est coupé)."""
+
+    def __init__(self, ecart=6):
+        super().__init__()
+        self._items, self._e = [], ecart
+
+    def addItem(self, it):
+        self._items.append(it)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return self._placer(QRect(0, 0, w, 0), False)
+
+    def setGeometry(self, r):
+        super().setGeometry(r)
+        self._placer(r, True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        s = QSize()
+        for it in self._items:
+            s = s.expandedTo(it.minimumSize())
+        m = self.contentsMargins()
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _placer(self, r, vrai):
+        x, y, haut = r.x(), r.y(), 0
+        for it in self._items:
+            t = it.sizeHint()
+            if x + t.width() > r.right() + 1 and haut > 0:
+                x, y, haut = r.x(), y + haut + self._e, 0
+            if vrai:
+                it.setGeometry(QRect(QPoint(x, y), t))
+            x += t.width() + self._e
+            haut = max(haut, t.height())
+        return y + haut - r.y()
 
 
 class Atelier(QWidget):
@@ -878,8 +933,7 @@ class Atelier(QWidget):
 
     # ---------- onglet Créer
     def _chips(self, items, current, on):
-        row = QHBoxLayout()
-        row.setSpacing(6)
+        row = Flux(6)
         grp = QButtonGroup(self)
         grp.setExclusive(True)
         for i, lab in enumerate(items):
@@ -890,7 +944,6 @@ class Atelier(QWidget):
             b.setChecked(i == current)
             grp.addButton(b, i)
             row.addWidget(b)
-        row.addStretch(1)
         grp.idClicked.connect(on)
         return row, grp
 
@@ -966,7 +1019,7 @@ class Atelier(QWidget):
         self.model_lab = QLabel("Modèle :")
         row.addWidget(self.model_lab)
         self.model = QComboBox()
-        self.model.setMinimumWidth(260)
+        self.model.setMinimumWidth(160)
         row.addWidget(self.model, 1)
         self.model.currentIndexChanged.connect(lambda _i: self.where.currentData() == "local" and
                                                self.model.currentData() and
@@ -1023,6 +1076,7 @@ class Atelier(QWidget):
         sc.setFrameShape(QFrame.Shape.NoFrame)
         sc.setWidget(left)
         sc.setMinimumWidth(460)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         lay.addWidget(sc, 5)
 
         # --- droite : aperçu
@@ -1054,6 +1108,8 @@ class Atelier(QWidget):
 
     def _wrap(self, row):
         """Les puces de style sur deux lignes si besoin."""
+        if isinstance(row, Flux):
+            return row
         g = QGridLayout()
         g.setSpacing(6)
         items = [row.itemAt(i).widget() for i in range(row.count()) if row.itemAt(i).widget()]
@@ -2013,6 +2069,7 @@ class MusicStudio(Atelier):
         sc.setFrameShape(QFrame.Shape.NoFrame)
         sc.setWidget(left)
         sc.setMinimumWidth(480)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         lay.addWidget(sc, 6)
         right = QVBoxLayout()
         right.addWidget(self._label("Mes créations" if getattr(self, "apple", False) else "🎶 Mes créations",

@@ -891,7 +891,12 @@ class Toile(QWidget):
 
     def paintEvent(self, _e):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#f4e9ef"))
+        try:                                                   # autour de la feuille : la couleur du thème
+            import themes as _th
+            fond = "#16171c" if _th.effective() == "pomme" else _th.color("#f4e9ef")
+        except Exception:
+            fond = "#f4e9ef"
+        p.fillRect(self.rect(), QColor(fond))
         o, e = self._origine(), self._echelle()
         zone = QRectF(o.x(), o.y(), TAILLE * e, TAILLE * e)
         p.fillRect(zone, QColor("#ffffff"))

@@ -42,6 +42,11 @@ Nothing to install. To remove Viki, just delete the file.
 - **Learn with her**: guided tours of apps, quizzes and study sheets from your own courses.
 - **Cursor mode**: her own pointer with your character's face, and a wheel of actions around it.
 - **Calm**: she stays focused on your request, and you choose what she tells you on her own.
+- **Nothing to guess**: "✨ What I can do" shows everything as big cards with phrases to click, suggestions appear as you type, and "Did you mean…?" helps when she doesn't understand. A simple mode hides the technical parts for kids.
+- **Handy card**: commands, code, links, addresses, parcels and dates she gives you come with Copy / Open / Map / Remind me buttons. Keep your favorite commands in a notebook.
+- **For developers**: she offers to explain a command that fails in your terminal, writes your commit message, tells you which program uses a port, and watches a log file for errors.
+- **Daily helpers**: pick up where you left off, quiet mode during calls, conversions of what you copy (°F, miles, time zones), ready-made texts (";adr").
+- **Clean look**: rounded dark windows with the same buttons everywhere.
 
 ## Requirements
 

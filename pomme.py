@@ -139,7 +139,7 @@ QLabel#aide { color: #9a8290; }
 QPushButton { background: #ffffff; color: #4a3540; border: 1px solid #e3d3dc; border-radius: 7px; padding: 5px 12px; }
 QPushButton:hover { background: #fdf0f5; border-color: #d0457a; }
 QPushButton:disabled { color: #b8a6b0; }
-QPushButton#chip { border-radius: 14px; padding: 5px 13px; }
+QPushButton#chip { border-radius: 12px; padding: 5px 13px; }
 QPushButton#chip:checked { background: #d0457a; color: white; border: 1px solid #d0457a; font-weight: bold; }
 QPushButton#creer { background: #d0457a; color: white; border: none; border-radius: 10px; padding: 11px;
                     font-size: 13pt; font-weight: bold; }

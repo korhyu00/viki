@@ -327,3 +327,20 @@ def grille(n, x, y, w, h, gap=8):
         rh = (h - gap * (rows + 1)) // rows
         out.append((x + gap + c * (cw + gap), y + gap + r * (rh + gap), cw, rh))
     return out
+
+
+def raison_humeur(h, meteo="", ville=""):
+    """Son humeur du matin, avec sa raison (sinon rien : pas d'humeur « dans le vide »)."""
+    m = _sa(meteo)
+    lieu = f" à {ville}" if ville else ""
+    if h == "joyeuse" and any(k in m for k in ("soleil", "clair", "sun")):
+        return f"Il fait beau{lieu}, ça me met de super bonne humeur !"
+    if h in ("calme", "pensive") and any(k in m for k in ("pluie", "rain", "nuage", "brouillard")):
+        return "Il fait gris aujourd'hui, je me sens toute calme."
+    if h == "joueuse" and ("neige" in m or "snow" in m):
+        return "Il neige ! J'ai envie de m'amuser aujourd'hui !"
+    if h == "contente_de_toi":
+        return "On a passé une super journée hier, je suis encore toute contente !"
+    if h == "fatiguee":
+        return "On s'est couchés tard hier… j'ai un peu de mal à me réveiller !"
+    return ""

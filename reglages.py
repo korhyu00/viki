@@ -169,7 +169,12 @@ class SettingsWindow(QWidget):
         self.apple = bool(pomme) and pomme.actif(C, comp.cfg)          # look « Réglages du Mac »
         self.setStyleSheet(STYLE + (pomme.REGLAGES if self.apple else "") + self._arrow_css())
         self.verre = False
-        if self.apple and comp.cfg.get("fenetres_verre", True):
+        try:                                   # fenêtres arrondies (habit.py) : pas de verre, la carte du tuto
+            import habit as _hb
+            arrondie = _hb.ACTIF
+        except Exception:
+            arrondie = False
+        if self.apple and comp.cfg.get("fenetres_verre", True) and not arrondie:
             self._verre()
         self.setWindowTitle(f"Réglages — {comp.char.get('name', 'Viki')}")
         try:

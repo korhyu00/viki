@@ -56,7 +56,7 @@ import plateforme                 # Windows : remplace les petits outils Linux (
 plateforme.install()
 IS_WIN = plateforme.IS_WIN
 _etape("2 plateforme ok")
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, pyqtSignal, QBuffer
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, pyqtSignal, QBuffer, QUrl
 _etape("3 QtCore ok")
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
@@ -164,6 +164,21 @@ try:
 except Exception as _e:
     print("guide.py :", _e, file=sys.stderr)
     guide = None
+try:
+    import decouvrir
+except Exception as _e:
+    print("decouvrir.py :", _e, file=sys.stderr)
+    decouvrir = None
+try:
+    import aides_vie
+except Exception as _e:
+    print("aides_vie.py :", _e, file=sys.stderr)
+    aides_vie = None
+try:
+    import commande_fenetre
+except Exception as _e:
+    print("commande_fenetre.py :", _e, file=sys.stderr)
+    commande_fenetre = None
 try:
     import pratique
 except Exception as _e:        # pratique.py absent : pas d'agenda en ligne, de lecture de page ni d'écran
@@ -300,7 +315,7 @@ try:
 except Exception as _e:        # extras.py absent : le reste fonctionne
     extras = None
     print("Fonctions en plus indisponibles :", _e, file=sys.stderr)
-from PyQt6.QtGui import (QAction, QActionGroup, QBitmap, QColor, QCursor, QFont, QFontMetrics, QIcon,
+from PyQt6.QtGui import (QTextCursor, QAction, QActionGroup, QBitmap, QColor, QCursor, QFont, QFontMetrics, QIcon,
                          QImage, QLinearGradient, QPainter, QRadialGradient, QPainterPath, QPen, QPixmap, QRegion,
                          QPolygonF, QTransform, QClipboard)
 from PyQt6.QtWidgets import (QSizePolicy, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem,
@@ -457,6 +472,12 @@ DEFAULT_CONFIG = {
     "piper_voice": "",            # voix Piper choisie (nom du fichier sans .onnx)
     "piper_speaker": -1,          # locuteur pour les voix multi-voix (-1 : par défaut)
     "rappels": [],                # [{"t": horodatage, "txt": "..."}]
+    "carnet_cmd": [],             # 📒 mon carnet de commandes [{"c": commande, "t": horodatage}]
+    "textes_rapides": {},         # ✂️ phrases toutes faites : {";adr": "12 rue…"}
+    "reunion_auto": True,         # 📞 discrète quand le micro / la webcam sert à un appel
+    "mode_simple": False,         # 🧸 mode simple : pas de fonctions techniques (pour les enfants)
+    "suggestions_barre": True,    # 💡 des phrases à cliquer quand on commence à écrire
+    "erreurs_terminal": True,     # 🐚 propose d'expliquer une commande qui échoue
     "stats": {},                  # premier jour, caresses, clics, messages
     "anniversaire": "",           # "jj/mm"
     "natural_device": "auto",     # voix naturelle : "auto" (carte graphique si possible) ou "cpu"
@@ -465,7 +486,7 @@ DEFAULT_CONFIG = {
     "head_hair_anim": True,       # tête qui bouge seule + cheveux qui se balancent
     "perf": "auto",               # auto (s'adapte au PC) / fluide / equilibre / econome
     "fullscreen_pause": True,     # se cache quand un jeu / une vidéo est en plein écran
-    "theme": "nuit",             # couleurs des fenêtres (themes.py)
+    "theme": "pomme",            # couleurs des fenêtres (themes.py) : « épuré », comme le tuto
     "mute_until": 0,              # muet : 0 = non, -1 = jusqu'à réactivation, sinon horodatage de fin
     "mute_bubbles": False,        # en muet : plus de bulles spontanées non plus
     "web": True,                  # autorise les recherches web QUAND TU LES DEMANDES
@@ -2068,6 +2089,13 @@ MUETS_TYPES = [   # 🔕 ce qu'elle peut te dire d'elle-même (clé, libellé)
     ("bilan", "Le bilan et « ta journée » du soir"), ("souvenirs", "« Je retiens que… »"),
     ("visite", "Les visites guidées proposées"), ("spontane", "Ses petites phrases spontanées"),
     ("bugs", "Proposer d'envoyer un rapport quand elle a un bug"),
+    ("blocage", "Proposer son aide quand je bloque longtemps sur la même chose"),
+    ("bravo", "Me féliciter à la fin d'une longue session"),
+    ("erreurs", "Proposer d'expliquer une commande qui échoue dans mon terminal"),
+    ("reunion", "Me dire qu'elle se fait discrète pendant un appel"),
+    ("reprendre", "Proposer de reprendre où j'en étais"),
+    ("logs", "Les erreurs des fichiers que je lui fais surveiller"),
+    ("convertir", "Convertir ce que je copie (°F, miles, heures…)"),
 ]
 RONDS_DEFAUT = ["ecrire", "fichier", "aujourdhui", "forme", "texte", "pratique", "curseur", "salon", "reglages", "ressources"]
 RONDS_ACTIONS = {"reglages": "open_settings", "micro": "toggle_mic", "image": "open_studio",
@@ -2811,6 +2839,85 @@ class RingsRow(QWidget):
         p.end()
 
 
+class ChampAuto(QPlainTextEdit):
+    """Le champ pour lui écrire : il passe à la ligne et grandit tout seul (jusqu'à 6 lignes),
+    pour qu'on voie toujours tout ce qu'on a écrit. Entrée : envoyer · Maj+Entrée : nouvelle ligne."""
+    returnPressed = pyqtSignal()
+    MAX_LIGNES = 6
+
+    def __init__(self):
+        super().__init__()
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setTabChangesFocus(True)
+        self.setAcceptDrops(False)                       # les fichiers glissés vont à la barre (📎)
+        self.document().setDocumentMargin(2)
+        self._h = 0
+        self.textChanged.connect(self._ajuster)
+
+    # --- comme un QLineEdit
+    def text(self):
+        return self.toPlainText()
+
+    def setText(self, t):
+        self.setPlainText(t or "")
+        self.moveCursor(QTextCursor.MoveOperation.End)
+
+    def insert(self, t):
+        self.insertPlainText(t)
+
+    def end(self, _mark=False):
+        self.moveCursor(QTextCursor.MoveOperation.End)
+
+    def keyPressEvent(self, e):
+        k = e.key()
+        if k in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self.returnPressed.emit()
+            return
+        c = self.textCursor()
+        if k == Qt.Key.Key_Up and c.block() == self.document().firstBlock() and \
+                c.block().layout().lineForTextPosition(c.positionInBlock()).lineNumber() <= 0:
+            return e.ignore()                            # ↑ sur la première ligne : messages précédents
+        if k == Qt.Key.Key_Down and c.block() == self.document().lastBlock() and \
+                c.block().layout().lineForTextPosition(c.positionInBlock()).lineNumber() >= \
+                c.block().layout().lineCount() - 1:
+            return e.ignore()
+        if k == Qt.Key.Key_Escape:
+            return e.ignore()
+        super().keyPressEvent(e)
+
+    def _lignes(self):
+        n, b = 0, self.document().firstBlock()
+        while b.isValid():
+            n += max(1, b.layout().lineCount() if b.layout() else 1)
+            b = b.next()
+        return max(1, n)
+
+    def _ajuster(self):
+        fm = self.fontMetrics()
+        m = self.contentsMargins()
+        n = self._lignes()
+        h = min(n, self.MAX_LIGNES) * fm.lineSpacing() + 2 * int(self.document().documentMargin()) \
+            + m.top() + m.bottom() + 8
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if n > self.MAX_LIGNES
+                                        else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        if h != self._h:
+            self._h = h
+            self.setFixedHeight(h)
+            w = self.window()
+            if w is not None and w is not self:
+                QTimer.singleShot(0, lambda: (w.adjustSize(), getattr(w, "follow", lambda: None)()))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        QTimer.singleShot(0, self._ajuster)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._ajuster)
+
+
 class InputBox(QWidget):
     """Petit champ pour lui écrire directement. Il reste collé au-dessus de sa tête
     (ou de sa bulle) et la suit quand elle bouge. Raccourcis texte et émotes en dessous."""
@@ -2848,12 +2955,12 @@ class InputBox(QWidget):
         col.setSpacing(4)
         lay = QHBoxLayout()
         lay.setSpacing(4)
-        self.edit = QLineEdit()
+        self.edit = ChampAuto()
         _ph = "Écris-lui…" if self.compact else "Écris-lui…   (Entrée : envoyer · Échap : fermer)"
         self.edit.setPlaceholderText(i18n.tr(_ph) if i18n else _ph)
-        self.edit.setToolTip("Entrée : envoyer · Échap : fermer · ↑ : messages précédents")
+        self.edit.setToolTip("Entrée : envoyer · Maj+Entrée : nouvelle ligne · Échap : fermer · ↑ : messages précédents")
         self.edit.setStyleSheet(
-            "QLineEdit { background: rgba(255,255,255,245); border: 2px solid #c05a7a; border-radius: %dpx;"
+            "QPlainTextEdit { background: rgba(255,255,255,245); border: 2px solid #c05a7a; border-radius: %dpx;"
             " padding: %s; font-size: %s; color: rgb(35,22,30); }"
             % ((12, "4px 9px", "10pt") if self.compact else (14, "6px 10px", "11pt")))
         pal = self.edit.palette()                    # texte d'aide lisible même avec un thème sombre (fond blanc)
@@ -2880,6 +2987,21 @@ class InputBox(QWidget):
         lay.addWidget(self.mic)
         lay.addWidget(self.send)
         col.addLayout(lay)
+        # 💡 des phrases à cliquer dès qu'on commence à écrire (rien à deviner)
+        self.sugg = QWidget()
+        self.sugg_lay = QHBoxLayout(self.sugg)
+        self.sugg_lay.setContentsMargins(2, 0, 2, 0)
+        self.sugg_lay.setSpacing(5)
+        self.sugg.hide()
+        col.addWidget(self.sugg)
+        self._sugg_t = QTimer(self)
+        self._sugg_t.setSingleShot(True)
+        self._sugg_t.timeout.connect(self.majs_suggestions)
+        self.edit.textChanged.connect(lambda: self._sugg_t.start(160))
+        self._ph_base = self.edit.placeholderText()
+        self._ph_t = QTimer(self)                          # un exemple différent dans la barre vide
+        self._ph_t.timeout.connect(self._exemple_barre)
+        self._ph_t.start(4500)
         self.setAcceptDrops(True)
 
         # --- raccourcis : les plus utiles avec leur nom, le reste dans « Plus »
@@ -3016,6 +3138,64 @@ class InputBox(QWidget):
         self.history, self.hpos = [], 0
         self._follow = QTimer(self)
         self._follow.timeout.connect(self.follow)
+
+    SUGG = ("QPushButton { background: rgba(255,255,255,250); color: rgb(28,28,34); border: 2px solid #0a84ff; "
+            "border-radius: 12px; padding: 2px 10px; font-size: 9.5pt; } "
+            "QPushButton:hover { background: #0a84ff; color: white; }")
+
+    def _exemple_barre(self):
+        if not decouvrir or self.edit.text() or not self.comp.cfg.get("suggestions_barre", True):
+            return
+        self._ph_n = getattr(self, "_ph_n", 0) + 1
+        if self._ph_n % 2 == 1:
+            ex = decouvrir.exemple_au_hasard(self.comp.catalogue_phrases())
+            if ex:
+                self.edit.setPlaceholderText((i18n.tr("Essaie : « {} »") if i18n else "Essaie : « {} »").format(ex))
+                return
+        self.edit.setPlaceholderText(self._ph_base)
+
+    def cacher_suggestions(self):
+        if self.sugg.isVisible():
+            self.sugg.hide()
+            QTimer.singleShot(0, self.adjustSize)
+
+    def majs_suggestions(self):
+        txt = self.edit.text().strip()
+        while self.sugg_lay.count():
+            it = self.sugg_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        if not decouvrir or len(txt) < 2 or txt.startswith(";") or len(txt) > 40 \
+                or not self.comp.cfg.get("suggestions_barre", True):
+            return self.cacher_suggestions()
+        res = [(sc, it) for sc, it in decouvrir.chercher(txt, self.comp.catalogue_phrases(), n=3 if self.mini else 4)
+               if sc >= 1.0]
+        res = [(sc, it) for sc, it in res if decouvrir._sa(it["montre"]).strip() != decouvrir._sa(txt)]
+        if not res:
+            return self.cacher_suggestions()
+        for _sc, it in res:
+            lab = it["montre"] if it["mode"] != "action" else it["titre"]
+            lab = lab if len(lab) <= 30 else lab[:28] + "…"
+            b = QPushButton(it["ico"] + " " + lab + (" …" if it["mode"] == "remplir" else ""))
+            b.setStyleSheet(self.SUGG)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(i18n.tr("Clique : je le fais") if i18n else "Clique : je le fais")
+            b.clicked.connect(lambda _c=False, x=it: self._prendre_suggestion(x))
+            self.sugg_lay.addWidget(b)
+        self.sugg_lay.addStretch(1)
+        self.sugg.show()
+        QTimer.singleShot(0, self.adjustSize)
+
+    def _prendre_suggestion(self, it):
+        self.cacher_suggestions()
+        if it["mode"] == "remplir":
+            return self.comp.faire_exemple(it)
+        self.history.append(it["phrase"])
+        self.hpos = len(self.history)
+        self.edit.clear()
+        self.comp.faire_exemple(it)
 
     def paintEvent(self, e):
         if getattr(self, "colonne", False):               # panneau un peu foncé : lisible sur tous les fonds
@@ -3250,6 +3430,7 @@ class InputBox(QWidget):
         self.history.append(text)
         self.hpos = len(self.history)
         self.edit.clear()
+        self.cacher_suggestions()
         self.comp.handle_message(text)
 
     def keyPressEvent(self, e):
@@ -5203,6 +5384,8 @@ class Companion(QWidget):
                 log_error("mods")
         if themes:
             try:
+                if getattr(themes, "habit", None) is not None:      # fenêtres arrondies comme le tuto
+                    themes.habit.ACTIF = themes.habit.ACTIF and self.cfg.get("fenetres_arrondies", True)
                 themes.install(app, self.cfg.get("theme", "nuit"), self.cfg.get("theme_couleur", ""))
             except Exception as e:
                 print("Thème :", e, file=sys.stderr)
@@ -5442,6 +5625,20 @@ class Companion(QWidget):
                     themes.install(self.app, "nuit", self.cfg.get("theme_couleur", ""))
                 except Exception:
                     pass
+        QTimer.singleShot(8000, self._lanceurs_a_jour)   # clic droit des fichiers, démarrage auto : bon chemin
+        self._aides_timer = QTimer(self)                  # terminal, logs surveillés, appel en cours
+        self._aides_timer.timeout.connect(self._aides_tick)
+        self._aides_timer.start(3000)
+        QTimer.singleShot(45_000, self._reprendre_matin)   # « reprendre où j'en étais ? » (une fois par jour)
+        if not self.cfg.get("defauts_pomme2"):       # le style « épuré » du tuto pour toutes les fenêtres (une fois)
+            self.cfg["defauts_pomme2"] = True
+            if self.cfg.get("theme", "nuit") in ("nuit", "sombre", "rose", "graphite", "auto", "systeme") \
+                    and themes and not self.cfg.get("nuit_etat"):
+                self.cfg["theme"] = "pomme"
+                try:
+                    themes.install(self.app, "pomme", self.cfg.get("theme_couleur", ""))
+                except Exception:
+                    pass
         if self.first_run or not self.cfg.get("taille65"):   # premier lancement : Viki seule au début
             self.cfg["taille65"] = True
             self.cfg["scale"] = round(float(self.char.get("scale", 0.9)) * 0.65, 4)
@@ -5502,6 +5699,9 @@ class Companion(QWidget):
             if self.cfg.get("notif_lire"):
                 self._start_notifs()
             QTimer.singleShot(20_000, self._dl_veille)                    # 📥 téléchargements
+            if not self.cfg.get("tuto_vu"):                               # 📖 le petit tuto (une seule fois)
+                QTimer.singleShot(90_000 if self.first_run else 9_000,
+                                  lambda: self.apres_focus(lambda: self.ouvrir_tuto(auto=True)))
             if not self.first_run:
                 QTimer.singleShot(15 * 60_000, self._bugs_message_unique)   # 🐞 le petit mot du développeur (une fois)
             if curseur_viki:
@@ -5539,6 +5739,13 @@ class Companion(QWidget):
                 if playing:
                     title = subprocess.run([pc, "metadata", "title"], capture_output=True,
                                            text=True, timeout=3).stdout.strip()
+                if playing and title and title != self.__dict__.get("_titre_compte"):
+                    self._titre_compte = title                 # 🎵 ses goûts : ce que tu écoutes souvent
+                    g = self.cfg.setdefault("gouts_musique", {})
+                    g[title[:80]] = g.get(title[:80], 0) + 1
+                    if len(g) > 300:
+                        for k in sorted(g, key=g.get)[:100]:
+                            g.pop(k, None)
                 if playing and title and title != self.music_title and self.cfg.get("music_dance", True):
                     self.music_title = title
                     self.bridge.music_started.emit()
@@ -5606,6 +5813,9 @@ class Companion(QWidget):
             if mode == "travail":
                 st = self.cfg.setdefault("stats", {})
                 st["pomodoros"] = st.get("pomodoros", 0) + 1
+                _j = datetime.date.today().isoformat()
+                self.cfg["_pomo_n"] = (self.cfg.get("_pomo_n", 0) + 1) if self.cfg.get("_pomo_jour") == _j else 1
+                self.cfg["_pomo_jour"] = _j
                 self.say_from("pomodoro_fin")
                 self.pomodoro = ("pause", time.monotonic() + 5 * 60)
                 self._pomo_music(False)
@@ -6868,13 +7078,53 @@ class Companion(QWidget):
             QTimer.singleShot(50, self._update_mask)      # nouvelle fenêtre native : on réapplique
 
     # ---------- masque (les clics passent à travers le vide)
-    def _bubble_rect(self):
-        if self.__dict__.get("_think") is not None and self._think_visible(time.monotonic()):
-            return self._think_rect()
-        if not self.bubble_text:
-            return None
-        font = self._bubble_font()
-        fm = QFontMetrics(font)
+    def _bulle_pages(self, text):
+        """Le texte en « pages » qui tiennent toutes entières dans la bulle (rien n'est coupé)."""
+        fm = QFontMetrics(self._bubble_font())
+        maxw = self._bubble_maxw()
+        hmax = BUBBLE_AREA - 30 - 20
+        fl = Qt.TextFlag.TextWordWrap
+
+        def tient(t):
+            return fm.boundingRect(QRect(0, 0, maxw - 28, 10000), fl, t + " …").height() <= hmax
+        if tient(text):
+            return [text]
+        pages, cur = [], ""
+        morceaux = []
+        for ph in re.split(r"(?<=[.!?…:;])\s+|\n+", text):
+            if ph and not tient(ph):                      # une phrase trop longue : par mots
+                bout = ""
+                for mot in ph.split():
+                    if bout and not tient(bout + " " + mot):
+                        morceaux.append(bout)
+                        bout = mot
+                    else:
+                        bout = (bout + " " + mot).strip()
+                if bout:
+                    morceaux.append(bout)
+            elif ph:
+                morceaux.append(ph)
+        for m in morceaux:
+            if cur and not tient(cur + " " + m):
+                pages.append(cur)
+                cur = m
+            else:
+                cur = (cur + " " + m).strip()
+        if cur:
+            pages.append(cur)
+        return [pg + " …" for pg in pages[:-1]] + pages[-1:] if pages else [text]
+
+    def _bulle_page_suivante(self, sid, pages, i):
+        if self.speech_id != sid or i >= len(pages):
+            return
+        self.bubble_text = pages[i]
+        self._update_mask()
+        self.update()
+        if i + 1 < len(pages):
+            d = max(2.6, len(pages[i]) * 0.068) * float(self.cfg.get("a11y_bulle", 1) or 1)
+            QTimer.singleShot(int(d * 1000), lambda: self._bulle_page_suivante(sid, pages, i + 1))
+
+    def _bubble_maxw(self):
         maxw = self.W - 24
         lo, hi = 4.0, None                                 # la barre en colonne est ouverte : on l'évite
         b = self.__dict__.get("input_box")
@@ -6893,6 +7143,18 @@ class Companion(QWidget):
             else:
                 lo = max(lo, bl + rb.width() + 6.0)
             maxw = max(140, min(maxw, int((hi if hi is not None else self.W - 4) - lo)))
+        self._bulle_lo_hi = (lo, hi)
+        return maxw
+
+    def _bubble_rect(self):
+        if self.__dict__.get("_think") is not None and self._think_visible(time.monotonic()):
+            return self._think_rect()
+        if not self.bubble_text:
+            return None
+        font = self._bubble_font()
+        fm = QFontMetrics(font)
+        maxw = self._bubble_maxw()
+        lo, hi = self._bulle_lo_hi
         br = fm.boundingRect(QRect(0, 0, maxw - 28, 1000),
                              Qt.TextFlag.TextWordWrap, self.bubble_text)
         w = min(maxw, br.width() + 28)
@@ -7696,6 +7958,15 @@ class Companion(QWidget):
             sv = self.__dict__.get("_suivi")
             if sv and not sv[-1][2]:
                 sv[-1][2] = text[:160]
+        if commande_fenetre and text != "…" and self.cfg.get("fenetre_commandes", True):
+            try:                                        # 💻 une commande dans sa réponse : la carte « Copier » à côté
+                cmds = commande_fenetre.elements(text, lignes=False, dates=False)
+                if not any(c["type"] in ("commande", "code") for c in cmds) and not self.concentree():
+                    cmds = []                           # ses phrases à elle : seulement les commandes et le code
+                if cmds:
+                    QTimer.singleShot(150, lambda c=cmds: self.montrer_commandes(c))
+            except Exception:
+                log_error("commandes")
         if text != "…" and len(text) > 2:                # tout ce qu'elle dit (pour « Ce qu'elle t'a dit »)
             h = self.__dict__.setdefault("historique", [])
             if not h or h[-1][1] != text:
@@ -7706,8 +7977,18 @@ class Companion(QWidget):
         sid = self.speech_id
         self.sq = []
         self._stop_audio()
-        self.bubble_text = text if len(text) < 260 else text[:257] + "…"
-        self.bubble_until = time.monotonic() + (max(3.0, len(text) * 0.07) + 2.5) * float(self.cfg.get("a11y_bulle", 1) or 1)
+        try:
+            pages = self._bulle_pages(text)
+        except Exception:
+            pages = [text if len(text) < 260 else text[:257] + "…"]
+        self.bubble_text = pages[0]
+        k_b = float(self.cfg.get("a11y_bulle", 1) or 1)
+        self.bubble_until = time.monotonic() + (max(3.0, len(text) * 0.07) + 2.5) * k_b
+        if len(pages) > 1:                                 # long : la bulle tourne les pages, rien n'est coupé
+            tot = sum(max(2.6, len(pg) * 0.068) for pg in pages[:-1]) * k_b
+            self.bubble_until = max(self.bubble_until, time.monotonic() + tot + (max(3.0, len(pages[-1]) * 0.07) + 2.5) * k_b)
+            d = max(2.6, len(pages[0]) * 0.068) * k_b
+            QTimer.singleShot(int(d * 1000), lambda sid_=self.speech_id, pg=pages: self._bulle_page_suivante(sid_, pg, 1))
         self._update_mask()
         if getattr(self, "reader_active", False):  # elle lit un livre : on ne coupe pas sa lecture
             return
@@ -9612,6 +9893,11 @@ class Companion(QWidget):
             else:
                 return self.ask_yes(f"Je n'ai pas la réponse par cœur, mais je peux ouvrir Wikipédia sur « {subj} ». "
                                     "Je l'ouvre ?", fn)
+        if self.ollama_ok and len(text.split()) <= 3 and decouvrir:   # « musique » tout court : les phrases à cliquer
+            try:
+                self.tu_voulais_dire(text, seul=False)
+            except Exception:
+                log_error("tu voulais dire")
         if self.ollama_ok:
             if self.chat_win and self.chat_win.isVisible():
                 self.chat_win.add("toi", text)
@@ -9620,7 +9906,8 @@ class Companion(QWidget):
             self.send_chat(text)
         else:
             self.recheck_ollama()
-            self.say_from("sans_ia")
+            if not self.tu_voulais_dire(text):
+                self.say_from("sans_ia")
 
     # ---------- micro : reconnaissance vocale locale (faster-whisper)
     def _stt_python(self):
@@ -10121,7 +10408,10 @@ class Companion(QWidget):
                 return True
         if astuces and not _traduit:
             if astuces.is_help(text):
-                self.open_tips()
+                if decouvrir:
+                    self.ouvrir_livre()
+                else:
+                    self.open_tips()
                 return True
             fr = astuces.to_french(text)
             if fr and fr != "__aide" and _sans_accents(fr.lower()) != _sans_accents(text.lower().strip()):
@@ -10698,7 +10988,11 @@ class Companion(QWidget):
             self.emotion = emo
             self.say_emotion = self._apply_emotion() if emo else ""
         self.stream_text = (getattr(self, "stream_text", "") + " " + chunk).strip()
-        shown = self.stream_text if len(self.stream_text) < 260 else "…" + self.stream_text[-250:]
+        try:
+            pg = self._bulle_pages(self.stream_text)
+            shown = pg[-1] if len(pg) == 1 else "… " + pg[-1]
+        except Exception:
+            shown = self.stream_text if len(self.stream_text) < 260 else "…" + self.stream_text[-250:]
         self.bubble_text = shown
         self.bubble_until = max(self.bubble_until, now + max(3.0, len(chunk) * 0.07) + 2.5)
         self._update_mask()
@@ -10707,6 +11001,13 @@ class Companion(QWidget):
     def _on_chat_done(self, reply):
         if self._run_tools(reply):
             reply = re.sub(r"\[(?:WEB|FICHIER)\s*:[^\]]*\]", "", reply, flags=re.I).strip() or "(je cherche…)"
+        if commande_fenetre and self.cfg.get("fenetre_commandes", True):
+            try:                                       # 💻 les commandes de sa réponse, à copier
+                cmds = commande_fenetre.elements(reply, lignes=True)
+                if cmds:
+                    self.montrer_commandes(cmds)
+            except Exception:
+                log_error("commandes")
         em = EMOJI_RE.search(reply or "")
         if em:
             self._spawn_emoji(em.group(0), 2)
@@ -10802,6 +11103,8 @@ class Companion(QWidget):
                   + "Réponds toujours en français, en une à trois phrases courtes, sur un ton "
                   "amical et naturel, sans émojis. Commence TOUJOURS ta réponse par une seule "
                   "balise d'émotion parmi [joie] [surprise] [triste] [boude] [timide] [neutre]. "
+                  "Si tu donnes une commande à taper dans un terminal, écris-la entre accents graves, par "
+                  "exemple `sudo pacman -Syu` : elle s'affiche dans une fenêtre où l'utilisateur peut la copier. "
                   "Si on te demande de chanter une chanson existante, n'en cite pas les paroles : "
                   "invente plutôt quelques mots à toi.")
         lang = self.cfg.get("langue", "fr")
@@ -13645,7 +13948,12 @@ class Companion(QWidget):
         except Exception:
             dg = {}
         if ok:
-            self._accord = SG.Accord(lambda: self.bridge.bg_done.emit(lambda _x: self.roue_curseur(), None)).demarrer()
+            def ouvrir(_x=None):
+                if not self.__dict__.get("_accord_vu"):       # la 1re fois : une trace (pour comprendre un souci)
+                    self._accord_vu = True
+                    log_info("deux boutons : clic détecté, j'ouvre la roue")
+                self.roue_curseur()
+            self._accord = SG.Accord(lambda: self.bridge.bg_done.emit(ouvrir, None)).demarrer()
             if not au_demarrage:
                 self.say("C'est prêt : clique avec les deux boutons de la souris en même temps, et ma roue s'ouvre ! 🎡")
             return
@@ -13657,7 +13965,11 @@ class Companion(QWidget):
             return self.say("Ton compte est bien dans le groupe « input », mais il faut te déconnecter puis te "
                             "reconnecter (ou redémarrer) pour que ça marche. Ensuite, réactive l'option !")
         cmd = ('echo "Viki : pour voir le clic des deux boutons de la souris partout, ton compte doit être dans le '
-               'groupe input."; sudo usermod -aG input "$USER" && echo && echo "C\'est fait ! Déconnecte-toi puis '
+               'groupe input."; '
+               # Bazzite, Silverblue, Kinoite… : le groupe est défini dans /usr/lib/group, il faut le recopier d'abord
+               'if ! grep -q "^input:" /etc/group && grep -q "^input:" /usr/lib/group 2>/dev/null; then '
+               'grep "^input:" /usr/lib/group | sudo tee -a /etc/group >/dev/null; fi; '
+               'sudo usermod -aG input "$USER" && echo && echo "C\'est fait ! Déconnecte-toi puis '
                'reconnecte-toi (ou redémarre) pour que ça marche."; echo; read -p "Entrée pour fermer…"')
         self.ask_yes("Pour voir le clic des deux boutons partout (même sous Wayland), il faut ajouter ton compte au "
                      "groupe « input » : je lis seulement les boutons de la souris, jamais le clavier. J'ouvre un terminal avec la "
@@ -13756,7 +14068,8 @@ class Companion(QWidget):
                 r.close()
             except RuntimeError:
                 pass
-        self._roue = curseur_viki.Roue(pt)
+        rb = self.__dict__.get("ronds_bar")
+        self._roue = curseur_viki.Roue(pt, icon_family(), self._son_menu, (rb.clic if rb is not None else None))
         self._roue.choisi.connect(lambda a, pt=pt: QTimer.singleShot(250, lambda: self._roue_action(a, pt)))
         self._roue.show()
         self._roue.activateWindow()
@@ -13814,13 +14127,182 @@ class Companion(QWidget):
             self.clip_action("traduire", text=res)
         self._bg(work, done)
 
+    # ---------- 📖 le petit tuto
+    def ouvrir_tuto(self, auto=False):
+        try:
+            import tuto
+        except Exception:
+            log_error("tuto")
+            return
+        if auto and (self.cfg.get("tuto_vu") or GUEST):
+            return
+        t = self.__dict__.get("_tuto")
+        if t is not None:
+            try:
+                t.close()
+            except RuntimeError:
+                pass
+        t = self._tuto = tuto.Tuto(icon_family())
+        g = self.frameGeometry()
+        ecran = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        x = g.right() + 12 if g.right() + 12 + t.width() <= ecran.right() else g.left() - t.width() - 12
+        y = min(max(ecran.top() + 10, g.center().y() - t.height() // 2), ecran.bottom() - t.height() - 10)
+        t.move(max(ecran.left() + 10, x), y)
+        t.essayer.connect(self._tuto_essayer)
+        t.ferme.connect(lambda: (self.cfg.__setitem__("tuto_vu", True), save_config(self.cfg)))
+        t.show()
+        t.raise_()
+        t.activateWindow()
+        return True
+
+    def _tuto_essayer(self, act):
+        if act == "ronds":
+            self.toggle_ronds()
+        elif act == "menu":
+            g = self.frameGeometry()
+            self.popup_menu(self.menu, QPoint(g.center().x(), g.top() + g.height() // 3))
+        elif act == "ecrire":
+            self.open_input()
+        elif act == "guide":
+            self.guide_demander()
+        elif act == "curseur":
+            self.mode_curseur_menu()
+        elif act == "muets":
+            self.fenetre_muets()
+        elif act == "bug":
+            self.say("Si un jour je bugue, dis-moi « signale un bug » : je prépare tout. 💜")
+        elif act == "livre":
+            self.ouvrir_livre()
+
+    # ---------- 🤔 tu bloques ? 🎉 bravo pour ta session
+    def _suivi_blocage(self, titre, cat, idle):
+        """(Dans le fil du cerveau) Même fenêtre depuis longtemps, et tu es là : peut-être que tu bloques."""
+        t = (titre or "").strip()
+        b = self.__dict__.get("_blocage")
+        if not t or cat not in ("code", "travail", "web", "creation"):
+            self._blocage = None
+            return
+        if not b or b[0] != t:
+            self._blocage = [t, time.time(), 0]
+            return
+        if idle < 90:
+            b[2] += 1                                   # tours où tu étais actif sur cette même fenêtre
+        if time.time() - b[1] > 25 * 60 and b[2] >= 50:
+            self._blocage = [t, time.time() + 3 * 3600, 0]  # pas avant 3 h sur la même chose
+            self.bridge.bg_done.emit(self._proposer_aide_blocage, t)
+
+    def _proposer_aide_blocage(self, titre):
+        if self.concentree() or self.fs_hidden or self.bubble_text or not self.auto("blocage"):
+            return
+        nom = re.sub(r"\s*[—–-]\s*[^—–-]{2,30}$", "", titre).strip()[:50]
+        self.ask_yes(f"Ça fait un moment que tu es sur « {nom} »… Tu bloques ? Je regarde ton écran pour t'aider ? "
+                     "(oui / non)", lambda: self.guide_ecran("Regarde ce que je fais et aide-moi à avancer : explique "
+                                                             "ce qu'il y a et ce que je pourrais faire ensuite."))
+
+    def _fin_session(self, ev):
+        cat, duree = ev
+        if self.concentree() or self.fs_hidden or self.bubble_text or self._brain_quiet() and cat != "jeu":
+            return
+        d = cerveau.fmt_d(duree) if cerveau else f"{int(duree // 60)} min"
+        if cat in ("code", "travail", "creation") and duree > 90 * 60 and self.auto("bravo"):
+            self._spawn("etoile", 3)
+            self.happy_until = time.monotonic() + 2
+            self.say(random.choice([f"Belle session de {d} ! Tu mérites une vraie pause. 🎉",
+                                    f"{d} d'affilée, bravo ! Lève-toi un peu, étire-toi. 💪"]))
+        elif cat == "jeu" and duree > 60 * 60 and self.auto("bravo"):
+            self.say(random.choice([f"Bonne partie ? {d} de jeu ! Tu as gagné ? 🎮",
+                                    f"Te revoilà après {d} de jeu ! Raconte !"]))
+
+    # ---------- 💬 des phrases qui ont une raison (ce que tu fais, la météo, votre journée)
+    def _raisons_du_jour(self):
+        """Ce qui s'est vraiment passé aujourd'hui, pour expliquer son humeur."""
+        out = []
+        j = datetime.date.today().isoformat()
+        n = (self.cfg.get("msgs_jour") or {}).get(j, 0)
+        if n >= 12:
+            out.append(("discussion", f"On a discuté {n} fois aujourd'hui, ça me fait trop plaisir !"))
+        clics = len([c for c in getattr(self, "my_clicks", []) if time.monotonic() - c < 900])
+        if clics >= 4:
+            out.append(("calins", "Tu m'as fait plein de câlins, je suis toute contente !"))
+        w = str(self.weather or "").lower()
+        ville = self.cfg.get("meteo_ville", "") or ""
+        if "soleil" in w or "clair" in w:
+            out.append(("soleil", "Il fait beau" + (f" à {ville}" if ville else "") + ", ça me met de bonne humeur !"))
+        st = self.cfg.get("stats", {})
+        if self.cfg.get("_pomo_jour") == j and self.cfg.get("_pomo_n", 0) >= 2:
+            out.append(("pomodoro", f"Déjà {self.cfg['_pomo_n']} pomodoros aujourd'hui, je suis fière de toi !"))
+        return out
+
+    def _phrase_contente(self):
+        r = self._raisons_du_jour()
+        if r:
+            return random.choice(r)[1]
+        return None                                       # contente sans raison : elle ne dit rien
+
+    def _phrase_contexte(self):
+        """Une réaction à ce que tu fais (jamais au hasard) ; None si rien d'intéressant."""
+        B = getattr(self, "brain", None)
+        if not B or not B.present() or self.muet("spontane"):
+            return None
+        dit = self.cfg.setdefault("_ctx_dit", {})
+        now = time.time()
+
+        def une_fois(cle, delai, txt):
+            if now - dit.get(cle, 0) < delai:
+                return None
+            dit[cle] = now
+            return txt
+        cat, app, titre = B.cat, (B.app or ""), (B.title or "")
+        depuis = now - getattr(B, "cat_since", now)
+        if cat == "code":
+            pr = cerveau.project_of(app, titre) if cerveau else ""
+            if depuis > 90 * 60:
+                return une_fois("code_long", 2 * 3600, f"Ça fait {cerveau.fmt_d(depuis)} que tu codes"
+                                + (f" sur {pr}" if pr else "") + "… une petite pause pour les yeux ?")
+            if pr:
+                return une_fois("code_" + pr, 3 * 3600, random.choice(
+                    [f"Ça avance, {pr} ?", f"Tu bosses sur {pr} ? Dis-moi si tu bloques sur un bug !"]))
+        if cat == "musique" and self.music_title:
+            n = (self.cfg.get("gouts_musique") or {}).get(self.music_title[:80], 0)
+            if n >= 3:                                  # 🎵 elle se souvient de ce que tu aimes
+                return une_fois("musique_" + self.music_title[:40], 6 * 3600,
+                                random.choice([f"Encore « {self.music_title} » ! C'est ta préférée en ce moment, hein ?",
+                                               f"« {self.music_title} », je commence à la connaître par cœur !"]))
+            return une_fois("musique_" + self.music_title[:40], 6 * 3600,
+                            random.choice([f"J'aime bien « {self.music_title} » !", f"« {self.music_title} »… ça me donne envie de danser !"]))
+        g = self.cfg.get("gouts_musique") or {}
+        if g and random.random() < 0.15:                # 💜 sa petite vie : ses goûts viennent des tiens
+            top = max(g, key=g.get)
+            if g[top] >= 4:
+                return une_fois("chanson_preferee", 7 * 86400, f"Ma chanson préférée en ce moment, c'est « {top} ». "
+                                "C'est toi qui me l'as fait découvrir !")
+        if cat == "creation":
+            return une_fois("creation", 3 * 3600, random.choice(["Tu crées quoi ? J'ai hâte de voir !",
+                                                                 "Montre-moi quand c'est fini !"]))
+        if cat == "travail" and depuis > 60 * 60:
+            return une_fois("travail_long", 2 * 3600, f"Tu travailles depuis {cerveau.fmt_d(depuis)}, bravo ! "
+                            "Un verre d'eau ?")
+        r = self._raisons_du_jour()
+        if r and random.random() < 0.4:
+            k, txt = random.choice(r)
+            return une_fois("raison_" + k, 5 * 3600, txt)
+        h = datetime.datetime.now().hour
+        w = str(self.weather or "").lower()
+        if "pluie" in w:
+            return une_fois("pluie", 6 * 3600, "Il pleut dehors… on est bien au chaud ici, non ?")
+        if "neige" in w:
+            return une_fois("neige", 6 * 3600, "Il neige ! Tu as vu ? ❄️")
+        if 12 <= h < 14 and cat in ("travail", "code"):
+            return une_fois("midi", 20 * 3600, "C'est l'heure de manger, et tu es encore devant l'écran… Pause ?")
+        return None
+
     # ---------- 🔕 ce qu'elle a le droit de te dire d'elle-même
     def muet(self, cle):
         return cle in (self.cfg.get("muets") or [])
 
     def auto(self, cle):
         """Avant un message spontané : True si elle peut le dire (et retient lequel, pour « ne me dis plus ça »)."""
-        if self.muet(cle):
+        if self.muet(cle) or self.__dict__.get("_reunion"):    # 📞 en appel : rien de spontané
             return False
         self._auto_attente = (cle, time.monotonic())      # retenu seulement si elle parle juste après
         return True
@@ -14377,6 +14859,450 @@ class Companion(QWidget):
         self.ask_yes(f"Oups, j'ai eu un petit bug ({ou}). Tu veux envoyer le rapport à korhyu pour qu'il le corrige ? "
                      "Rien de personnel dedans, et tu vois tout avant d'envoyer. (oui / non)", self.signaler_bug)
 
+    # ================================================================== 📖 découvrir : ne rien avoir à deviner
+    def catalogue_phrases(self):
+        lang = (self.cfg.get("langue", "fr") or "fr")[:2]
+        k = (lang, bool(self.cfg.get("mode_simple")))
+        c = self.__dict__.get("_cat_phrases")
+        if not c or c[0] != k:
+            c = self._cat_phrases = (k, decouvrir.catalogue(lang, simple=k[1]) if decouvrir else [])
+        return c[1]
+
+    def ouvrir_livre(self):
+        """📖 Ce que je sais faire : de grandes fiches, on clique une phrase et c'est fait."""
+        if not decouvrir:
+            return self.open_tips()
+        w = self.__dict__.get("_livre")
+        if w is None:
+            w = self._livre = decouvrir.Livre(self)
+        w.remplir()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def faire_exemple(self, it):
+        """Une phrase d'exemple cliquée : on la fait (« dire »), on la met dans la barre (« remplir ») ou on
+        ouvre la fonction (« action »)."""
+        if it.get("mode") == "action" and raccourcis:
+            a = next((x for x in raccourcis.actions(self) if x["id"] == it.get("action")), None)
+            if a:
+                return a["fn"]()
+        if it.get("mode") == "remplir":
+            self.open_input()
+            b = self.__dict__.get("input_box")
+            if b is not None:
+                t = it.get("remplir") or it["phrase"]
+                b.edit.setText(t)
+                if "  " in t:                               # « ajoute  à la liste » : le curseur au trou
+                    cur = b.edit.textCursor()
+                    cur.setPosition(t.index("  ") + 1)
+                    b.edit.setTextCursor(cur)
+                b.edit.setFocus()
+                b.cacher_suggestions()
+            return
+        self.last_interaction = time.monotonic()
+        self.bubble_text = f"« {it['montre']} »"
+        self.update()
+        self.handle_message(it["phrase"])
+
+    def tu_voulais_dire(self, text, seul=True):
+        """Pas compris : les 3 phrases les plus proches, en boutons. -> True si on en a montré."""
+        if not decouvrir or not commande_fenetre:
+            return False
+        res = [(sc, it) for sc, it in decouvrir.chercher(text, self.catalogue_phrases(), n=3) if sc >= 1.2]
+        if not res:
+            return False
+        if seul:
+            self.say("Je ne suis pas sûre d'avoir compris… Tu voulais dire une de ces choses ? 👇")
+        self.montrer_commandes([{"type": "action", "texte": it["montre"], "item": it} for _sc, it in res],
+                               titre=self.trd("Tu voulais dire… ?"),
+                               aide=self.trd("Clique sur « Vas-y » et je le fais. Toutes mes idées : « aide »."))
+        return True
+
+    def basculer_mode_simple(self, on=None):
+        on = (not self.cfg.get("mode_simple")) if on is None else bool(on)
+        self.cfg["mode_simple"] = on
+        save_config(self.cfg)
+        self._cat_phrases = None
+        try:
+            self._rebuild_menus()
+        except Exception:
+            pass
+        w = self.__dict__.get("_livre")
+        if w is not None and w.isVisible():
+            w.remplir()
+        self.say("Mode simple activé : je garde seulement l'essentiel, avec des mots simples. 🧸" if on else
+                 "Mode simple désactivé : toutes mes fonctions sont de retour.")
+
+    # ================================================================== aides du quotidien et du dev
+    def _aides_tick(self):
+        """Toutes les 3 s : le terminal (commande qui échoue), les logs surveillés ; toutes les 15 s : un appel ?"""
+        if not aides_vie:
+            return
+        try:
+            self._terminal_echecs()
+        except Exception:
+            log_error("terminal")
+        try:
+            self._logs_tick()
+        except Exception:
+            log_error("logs")
+        n = self.__dict__.get("_aides_n", 0) + 1
+        self._aides_n = n
+        if n % 5 == 0 and self.cfg.get("reunion_auto", True) and not GUEST:
+            threading.Thread(target=self._reunion_regarde, daemon=True).start()
+
+    # --- 🐚 une commande échoue dans le terminal
+    def _terminal_echecs(self):
+        f = aides_vie.TERMINAL
+        try:
+            taille = f.stat().st_size
+        except OSError:
+            return
+        pos = self.__dict__.get("_term_pos")
+        if pos is None or taille < pos:                   # au lancement : on ne reparle pas des vieilles erreurs
+            self._term_pos = taille
+            return
+        if taille == pos:
+            return
+        with open(f, "rb") as fh:
+            fh.seek(pos)
+            neuf = fh.read(64 * 1024).decode("utf-8", "replace")
+        self._term_pos = taille
+        if taille > 200_000:
+            try:
+                f.write_text("", encoding="utf-8")
+                self._term_pos = 0
+            except OSError:
+                pass
+        lignes = [l.split("\t") for l in neuf.splitlines() if l.count("\t") >= 2]
+        if not lignes or not self.cfg.get("erreurs_terminal", True):
+            return
+        code, cmd, dossier = lignes[-1][0], lignes[-1][1].strip(), lignes[-1][2].strip()
+        if not cmd or self.fs_hidden or self.muet("erreurs"):
+            return
+        now = time.monotonic()
+        if now - self.__dict__.get("_term_dit", -999) < 45 or cmd == self.__dict__.get("_term_derniere"):
+            return
+        self._term_dit, self._term_derniere = now, cmd
+        self.auto("erreurs")
+        court = cmd if len(cmd) < 60 else cmd[:57] + "…"
+        self.ask_yes(f"La commande « {court} » n'a pas marché (code {code}). Je t'explique pourquoi ? (oui / non)",
+                     lambda: self.expliquer_echec(cmd, code, dossier))
+
+    def expliquer_echec(self, cmd, code, dossier=""):
+        """L'IA explique pourquoi la commande a échoué et donne la commande qui corrige (dans la carte)."""
+        if not (self.ollama_ok or self.ia_remote()):
+            return self.say("Il me faut une IA pour ça (Réglages → Discussion). Copie le message d'erreur, et je "
+                            "t'aide quand même avec ce que je sais.")
+        self.say("Je regarde… 🔎")
+        langue = {"fr": "français"}.get(self.cfg.get("langue", "fr"), self.cfg.get("langue", "fr"))
+        prompt = (f"Sous Linux ({plateforme.distribution() if hasattr(plateforme, 'distribution') else 'Linux'}), "
+                  f"dans le dossier {dossier or '?'}, la commande `{cmd}` a échoué avec le code de sortie {code}. "
+                  f"Explique en {langue}, en 2 ou 3 phrases simples, la cause la plus probable (le code {code} aide : "
+                  "127 = commande introuvable, 126 = pas le droit de l'exécuter, 1 ou 2 = erreur de la commande…), "
+                  "puis donne la ou les commandes qui corrigent, chacune entre accents graves `comme ça`. "
+                  "Si tu ne peux pas savoir sans le message d'erreur, dis-le et propose de le copier.")
+
+        def fini(txt):
+            txt = (txt or "").strip()
+            if not txt:
+                return self.say("Je n'ai pas réussi à réfléchir là-dessus… Copie-moi le message d'erreur ?")
+            self.say(txt)
+            els = commande_fenetre.elements(txt, lignes=True, dates=False) if commande_fenetre else []
+            if els:
+                self.montrer_commandes(els)
+        self.ask_ai(prompt, fini)
+
+    # --- ✍️ message de commit
+    def ecrire_commit(self, dossier=""):
+        d = dossier or aides_vie.dossier_terminal()
+        if not d:
+            return self.say("Je ne sais pas dans quel projet tu es. Active « Alt+E dans le terminal » (menu Travail et "
+                            "PC) : ton terminal me dira où tu es. Ou dis « écris mon commit dans ~/mon/projet ».")
+        if not (self.ollama_ok or self.ia_remote()):
+            return self.say("Il me faut une IA pour écrire un message de commit (Réglages → Discussion).")
+        self.say("Je lis tes changements… ✍️")
+
+        def travail():
+            diff, quoi = aides_vie.diff_git(d)
+            self.bridge.ai_done.emit(lambda _t: self._commit_suite(d, diff, quoi), "")
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _commit_suite(self, d, diff, quoi):
+        nom = Path(d).name
+        if diff == "pas_git":
+            return self.say(f"« {nom} » n'est pas un dépôt Git.")
+        if diff == "rien":
+            return self.say(f"Rien n'a changé dans « {nom} » depuis le dernier commit. 👍")
+        langue = "français" if self.cfg.get("langue", "fr") == "fr" else "English"
+        prompt = ("Écris un message de commit Git pour ces changements. Format : une première ligne de 72 caractères "
+                  "maximum, à l'impératif, qui résume ; puis, si utile, une ligne vide et 2 à 4 puces courtes. "
+                  f"Langue : {langue}. Réponds UNIQUEMENT avec le message, sans guillemets ni ```.\n\n" + diff)
+
+        def fini(txt):
+            txt = re.sub(r"^```\w*\n?|```$", "", (txt or "").strip()).strip().strip('"')
+            if not txt:
+                return self.say("Je n'ai pas réussi à écrire le message… réessaie dans un instant ?")
+            lignes = txt.splitlines()
+            titre = lignes[0].strip()
+            corps = "\n".join(lignes[1:]).strip()
+            q = lambda t: "'" + t.replace("'", "'\\''") + "'"
+            ajout = "" if quoi == "staged" else "git add -A && "
+            cmd = ajout + "git commit -m " + q(titre) + (" -m " + q(corps) if corps else "")
+            self.say(f"Voilà un message pour « {nom} » : {titre}")
+            self.montrer_commandes([{"type": "texte", "texte": txt}, {"type": "commande", "texte": cmd}],
+                                   titre=self.trd("Ton message de commit"),
+                                   aide=self.trd("Copie le message, ou directement la commande (dans le dossier du projet).")
+                                   + ("" if quoi == "staged" else " " + self.trd("Rien n'était préparé avec git add : "
+                                                                                 "la commande ajoute tout.")))
+        self.ask_ai(prompt, fini)
+
+    def trd(self, t):
+        return i18n.tr(t) if i18n else t
+
+    # --- 🔌 qui utilise ce port ?
+    def qui_port(self, n):
+        def travail():
+            r = aides_vie.qui_port(n)
+            self.bridge.ai_done.emit(lambda _t: self._port_suite(n, r), "")
+        threading.Thread(target=travail, daemon=True).start()
+
+    def _port_suite(self, n, r):
+        if r is None:
+            return self.say("Je n'arrive pas à regarder les ports sur ce PC (il manque « ss »).")
+        if not r:
+            return self.say(f"Personne n'utilise le port {n} : il est libre. 👍")
+        noms = ", ".join(sorted({x[0] for x in r if x[0] != "?"})) or "un programme du système"
+        cmds = [f"kill {pid}" for _nom, pid, _p in r if pid]
+        if any(not pid for _nom, pid, _p in r):
+            cmds.append(f"sudo ss -ltnup 'sport = :{n}'")
+            cmds.append(f"sudo fuser -k {n}/tcp")
+        self.say(f"Le port {n} est utilisé par {noms}." + (" Pour l'arrêter, la commande est dans la carte." if cmds else ""))
+        if cmds:
+            self.montrer_commandes(cmds, titre=self.trd("Libérer le port {}").format(n),
+                                   aide=self.trd("« kill » arrête le programme proprement. Attention : ce qu'il faisait "
+                                                 "s'arrête aussi."))
+
+    # --- 📜 surveiller un fichier de log
+    def surveiller_log(self, chemin=""):
+        if not chemin:
+            from PyQt6.QtWidgets import QFileDialog
+            chemin, _ = QFileDialog.getOpenFileName(None, self.trd("Quel fichier surveiller ?"), str(Path.home()))
+            if not chemin:
+                return
+        chemin = os.path.expanduser(chemin)
+        if not os.path.isfile(chemin):
+            return self.say("Je ne trouve pas ce fichier.")
+        L = self.__dict__.setdefault("_logs", {})
+        L[chemin] = aides_vie.Surveille(chemin)
+        self.say(f"Je surveille « {Path(chemin).name} ». Je te préviens seulement si une erreur apparaît. 👀 "
+                 "(« arrête de surveiller » pour arrêter.)")
+
+    def arreter_logs(self):
+        L = self.__dict__.get("_logs") or {}
+        n = len(L)
+        self._logs = {}
+        self.say("J'arrête de surveiller." if n else "Je ne surveillais aucun fichier.")
+
+    def _logs_tick(self):
+        for chemin, sv in list((self.__dict__.get("_logs") or {}).items()):
+            err = sv.nouvelles_erreurs()
+            if not err or self.muet("logs"):
+                continue
+            now = time.monotonic()
+            if now - self.__dict__.get("_log_dit", -999) < 30:
+                continue
+            self._log_dit = now
+            self.auto("logs")
+            nom = Path(chemin).name
+            self.notifier(f"{nom} : {err[-1][:120]}", "📜", "logs")
+            self.say(f"Une erreur vient d'apparaître dans « {nom} » ({len(err)} ligne{'s' if len(err) > 1 else ''}).")
+            self.montrer_commandes([{"type": "texte", "texte": e} for e in err[-5:]],
+                                   titre=self.trd("Erreurs dans {}").format(nom), aide="")
+
+    # --- 📞 en appel : discrète
+    def _reunion_regarde(self):
+        try:
+            oui = aides_vie.en_appel() and not self.__dict__.get("mic_on") and not getattr(self, "recording", False)
+        except Exception:
+            oui = False
+        self.bridge.ai_done.emit(lambda _t: self._reunion_change(oui), "")
+
+    def _reunion_change(self, oui):
+        avant = bool(self.__dict__.get("_reunion"))
+        cpt = self.__dict__.get("_reunion_cpt", 0)
+        cpt = cpt + 1 if oui != avant else 0               # deux fois de suite avant de changer (pas de clignotement)
+        self._reunion_cpt = cpt
+        if cpt < 2:
+            return
+        self._reunion_cpt = 0
+        self._reunion = oui
+        if not self.muet("reunion"):
+            self.bubble_text = (self.trd("📞 Tu es en appel : je me fais discrète.") if oui else
+                                self.trd("📞 Fini l'appel ? Je suis de retour !"))
+            self.bubble_until = time.monotonic() + 4
+            self._update_mask()
+            self.update()
+
+    # --- ↩️ reprendre où j'en étais
+    def reprendre(self, proposer=False):
+        if not aides_vie:
+            return
+        fichiers = aides_vie.fichiers_recents()
+        if not fichiers:
+            if not proposer:
+                self.say("Je ne vois pas de fichiers ouverts récemment (ton bureau ne les note peut-être pas).")
+            return
+        dossiers = []
+        for f in fichiers:
+            d = str(Path(f).parent)
+            if d not in dossiers and d != str(Path.home()):
+                dossiers.append(d)
+        items = [{"type": "fichier", "texte": f} for f in fichiers] + \
+                [{"type": "dossier", "texte": d} for d in dossiers[:3]]
+
+        def montre():
+            self.montrer_commandes(items, titre=self.trd("Reprendre où tu en étais"),
+                                   aide=self.trd("Ce que tu as ouvert récemment. « Ouvrir » le rouvre."))
+        if proposer:
+            if self.muet("reprendre"):
+                return
+            self.auto("reprendre")
+            self.ask_yes(f"Tu veux reprendre où tu en étais ? J'ai retrouvé {len(fichiers)} fichier"
+                         f"{'s' if len(fichiers) > 1 else ''} ouvert{'s' if len(fichiers) > 1 else ''} récemment. "
+                         "(oui / non)", montre)
+        else:
+            self.say("Voilà ce que tu avais ouvert. 📂")
+            montre()
+
+    def _reprendre_matin(self):
+        j = datetime.date.today().isoformat()
+        if self.cfg.get("reprendre_jour") == j or self.first_run or GUEST:
+            return
+        self.cfg["reprendre_jour"] = j
+        save_config(self.cfg)
+        if datetime.datetime.now().hour < 5:
+            return
+        self.apres_focus(lambda: self.reprendre(proposer=True), 600)
+
+    # --- ✂️ phrases toutes faites
+    def texte_rapide(self, cle):
+        v = aides_vie.texte_rapide(cle, self.cfg.get("textes_rapides", {})) if aides_vie else None
+        if v is None:
+            return False
+        QApplication.clipboard().setText(v)
+        self.say("C'est copié ! Colle-le avec Ctrl+V. ✂️")
+        return True
+
+    def ajouter_texte_rapide(self, cle, texte):
+        cle = ";" + cle.strip().lstrip(";").lower()
+        self.cfg.setdefault("textes_rapides", {})[cle] = texte.strip()
+        save_config(self.cfg)
+        self.say(f"C'est noté : écris-moi « {cle} » et je copie ce texte pour toi. ✂️")
+
+    def textes_rapides_liste(self):
+        T = self.cfg.get("textes_rapides", {})
+        if not T:
+            return self.say("Tu n'as pas encore de phrases toutes faites. Dis par exemple : "
+                            "« ajoute le raccourci ;adr = 12 rue de la Paix, Lyon ».")
+        self.montrer_commandes([{"type": "texte", "texte": f"{k}  →  {v}"} for k, v in sorted(T.items())],
+                               titre=self.trd("Mes phrases toutes faites"),
+                               aide=self.trd("Écris-moi le raccourci (par exemple ;adr) : je copie le texte pour toi. "
+                                             "« oublie le raccourci ;adr » pour l'enlever."))
+
+    # --- 🔁 conversions de ce que tu copies
+    def _clip_convertir(self, txt):
+        if not aides_vie or self.muet("convertir") or not self.cfg.get("clip_convertir", True):
+            return False
+        r = aides_vie.convertir(txt)
+        if not r:
+            return False
+        self.auto("convertir")
+        self.montrer_commandes([{"type": "conversion", "texte": r}], titre=self.trd("Conversion"), aide="")
+        return True
+
+    def montrer_commandes(self, cmds, titre=None, aide=None):
+        """La carte « pratique » à côté d'elle : commandes, code, liens, adresses, dates… (liste de textes ou
+        d'éléments {"type", "texte"}). La même réponse en plusieurs fois : on garde tout."""
+        if not commande_fenetre or not cmds:
+            return
+        items = [c if isinstance(c, dict) else {"type": "commande", "texte": c} for c in cmds]
+        w = getattr(self, "_cmd_win", None)
+        if w is None:
+            w = self._cmd_win = commande_fenetre.Carte(self)
+        now = time.monotonic()
+        avant = self.__dict__.get("_cmd_liste") or []
+        if titre is None and w.isVisible() and now - self.__dict__.get("_cmd_t", 0) < 60:
+            items = avant + [i for i in items if not any(i["type"] == a["type"] and i["texte"] in a["texte"]
+                                                         for a in avant)]
+            items = [i for i in items if not any(i is not j and i["type"] == j["type"] and i["texte"] != j["texte"]
+                                                 and i["texte"] in j["texte"] for j in items)]
+        self._cmd_liste, self._cmd_t = items[:10], now
+        try:
+            r = self.frameGeometry()
+            r = QRect(r.left() + int(getattr(self, "char_cx", self.width() / 2) - self.cw / 2), r.top(),
+                      int(self.cw), r.height())
+        except Exception:
+            r = self.frameGeometry()
+        w.montrer(self._cmd_liste, r, titre=titre, aide=aide)
+
+    # --- boutons de la carte
+    def ouvrir_lien_carte(self, url):
+        open_link(url)
+
+    def ouvrir_chemin(self, p):
+        open_link(QUrl.fromLocalFile(os.path.expanduser(p)).toString())
+
+    def rappel_carte(self, it):
+        """📅 « Me le rappeler » : la veille à 18 h et le jour même à 9 h."""
+        try:
+            d = datetime.date.fromisoformat(it["date"])
+        except Exception:
+            return
+        txt = (it.get("phrase") or it["texte"])[:120]
+        faits = 0
+        for jour, h in ((d - datetime.timedelta(days=1), 18), (d, 9)):
+            t = datetime.datetime.combine(jour, datetime.time(h)).timestamp()
+            if t > time.time() + 60:
+                self.cfg.setdefault("rappels", []).append({"t": t, "txt": txt})
+                faits += 1
+        save_config(self.cfg)
+        self.say("C'est noté ! Je te le rappelle la veille au soir et le jour même. 📅" if faits else
+                 "Cette date est déjà passée, je ne peux pas te la rappeler.")
+
+    def carnet_a(self, c):
+        return any(x["c"] == c for x in self.cfg.get("carnet_cmd", []))
+
+    def carnet_basculer(self, c):
+        """☆ / ★ -> True si la commande est maintenant dans le carnet."""
+        L = self.cfg.setdefault("carnet_cmd", [])
+        if self.carnet_a(c):
+            self.cfg["carnet_cmd"] = [x for x in L if x["c"] != c]
+            save_config(self.cfg)
+            w = self.__dict__.get("_carnet_win")
+            if w is not None and w.isVisible():
+                w.remplir()
+            return False
+        L.append({"c": c, "t": time.time()})
+        del L[:-300]
+        save_config(self.cfg)
+        w = self.__dict__.get("_carnet_win")
+        if w is not None and w.isVisible():
+            w.remplir()
+        return True
+
+    def ouvrir_carnet(self):
+        if not commande_fenetre:
+            return
+        w = self.__dict__.get("_carnet_win")
+        if w is None:
+            w = self._carnet_win = commande_fenetre.Carnet(self)
+        w.remplir()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
     def _bugs_message_unique(self):
         """Une seule fois : le petit mot du développeur."""
         if self.cfg.get("bugs_mot_v1") or GUEST:
@@ -14385,13 +15311,8 @@ class Companion(QWidget):
             return QTimer.singleShot(60_000, self._bugs_message_unique)
         self.cfg["bugs_mot_v1"] = True
         save_config(self.cfg)
-        self.say("Petit mot de korhyu, qui me fabrique : il travaille tout seul, sur un vieux PC premier prix, et ne "
-                 "peut pas tester tous les ordinateurs. Si je bugue chez toi, dis « signale un bug » (ou clique sur "
-                 "🐞) : le rapport est déjà prêt, sans rien de personnel. Ça l'aide énormément ! 💜")
-        QTimer.singleShot(20_000, lambda: self.ask_yes(
-            "Et s'il réunit assez de dons, il pourra s'acheter un vrai PC avec une bonne carte graphique, pour "
-            "m'apprendre à générer des vidéos, traduire le texte dans les vidéos, et d'autres choses qui demandent "
-            "du vrai matériel. Tu veux voir sa page de dons (Ko-fi) ? (oui / non)", lambda: open_link(DON_URL)))
+        self.ask_yes("Un petit mot de korhyu, qui me développe tout seul sur un vieux PC : si quelque chose bugue chez toi, dis-moi « signale un bug » (ou clique sur 🐞), le rapport est prêt sans rien de personnel. Et si un jour tu veux le soutenir, quelques dons l'aideraient à s'offrir un PC plus puissant pour m'apprendre plein de choses : créer des vidéos à partir de tes idées, traduire le texte dans tes vidéos, te répondre plus vite avec une IA plus intelligente, avoir une voix encore plus naturelle… Sans aucune obligation ! Tu veux voir sa page Ko-fi ? (oui / non) 💜",
+                     lambda: open_link(DON_URL))
 
     def _vivante_tick(self):
         """Toutes les minutes : envie du jour (une fois l'après-midi), première neige."""
@@ -14416,6 +15337,9 @@ class Companion(QWidget):
                 and time.monotonic() - self.last_interaction > 20 * 60 and random.random() < 0.05:
             h["envie"] = True
             save_config(self.cfg)
+            B = getattr(self, "brain", None)
+            if B and B.cat in ("code", "travail", "creation"):      # tu es occupé : son envie attendra
+                return
             self.say(random.choice(assistant_jour.ENVIES.get(h.get("h"), ["J'ai envie qu'on fasse un truc ensemble !"])))
 
     # ---------- 🧰 les outils de son IA : une demande avec tes mots -> la bonne fonction de Viki
@@ -14972,6 +15896,14 @@ class Companion(QWidget):
 
     def _launch_cmd(self):
         """La commande qui lance Viki (AppImage, .exe, ou les sources)."""
+        if not IS_WIN:
+            try:
+                import touches as _t
+                st = _t.preparer_lanceur()                # le petit script stable (marche aussi pour le Flatpak)
+                if st:
+                    return [str(st)]
+            except Exception:
+                pass
         if os.environ.get("APPIMAGE"):
             return [os.environ["APPIMAGE"]]
         if getattr(sys, "frozen", False):
@@ -15062,6 +15994,36 @@ class Companion(QWidget):
             self.say("D'accord ! Je serai là dès que tu allumes ton PC." if on else
                      "D'accord, je ne me lance plus toute seule au démarrage.")
         return True
+
+    def _lanceurs_a_jour(self):
+        """Au démarrage : le script stable, le démarrage avec le PC, le clic droit des fichiers et Alt+E
+        pointent vers cette version de Viki (même si l'AppImage a été déplacée ou renommée)."""
+        if IS_WIN:
+            return
+        try:
+            import touches as _t
+            if not _t.preparer_lanceur():
+                return
+        except Exception:
+            return log_error("lanceur")
+        try:
+            self._refresh_autostart()
+        except Exception:
+            log_error("démarrage auto")
+
+        def fond():
+            try:
+                if clic_fichiers and clic_fichiers.installe() and not clic_fichiers.a_jour():
+                    clic_fichiers.installer()
+            except Exception:
+                pass
+            try:
+                import shell_viki as _sv
+                if _sv.installe():
+                    _sv.installer()
+            except Exception:
+                pass
+        threading.Thread(target=fond, daemon=True).start()
 
     def _refresh_autostart(self):
         """L'AppImage a peut-être été déplacée : on remet le bon chemin dans le lanceur."""
@@ -15350,6 +16312,7 @@ class Companion(QWidget):
                 continue
             n += 1
             try:
+                idle = time.monotonic() - self._cursor[1]
                 if self.cfg.get("presence_accueil", True) or self.cfg.get("routines", True):
                     cur_idle = time.monotonic() - self._cursor[1]
                     idle = cerveau.idle_seconds(cur_idle)
@@ -15368,7 +16331,11 @@ class Companion(QWidget):
                             self.bridge.bg_done.emit(self._on_game_events, evs)
                         if n % 6 == 0:
                             self.games.save()
+                    avant_cat, avant_t = B.cat, getattr(B, "cat_since", time.time())
                     B.activity(cls, title, cat, call=call, music=bool(self.music_playing))
+                    if B.cat != avant_cat and avant_cat:          # 🎉 une session se termine
+                        self.bridge.bg_done.emit(self._fin_session, (avant_cat, time.time() - avant_t))
+                    self._suivi_blocage(title, B.cat, idle)       # 🤔 tu bloques depuis longtemps ?
                     if cls and cls != self.__dict__.get("_derniere_cls"):
                         self._derniere_cls = cls
                         self.bridge.bg_done.emit(self._appli_nouvelle, cls)
@@ -15398,7 +16365,10 @@ class Companion(QWidget):
             if first:
                 msg += f" Hier : {first}."
             if assistant_jour and self.cfg.get("humeurs", True) and not self.muet("envies"):   # 💜 son humeur du jour
-                msg += " " + random.choice(assistant_jour.HUMEURS.get(self.humeur(), [""]))
+                raison = assistant_jour.raison_humeur(self.humeur(), str(self.weather or ""),
+                                                      self.cfg.get("meteo_ville", ""))
+                if raison:                              # seulement si elle peut dire pourquoi
+                    msg += " " + raison
             return self.say(msg.strip())
         d = cerveau.fmt_d(away)
         if away < 60 * 60:
@@ -15837,7 +16807,7 @@ class Companion(QWidget):
         if on and not st:
             self.cfg["nuit_etat"] = {"volume": self.cfg.get("volume", 0.35), "theme": self.cfg.get("theme", "nuit")}
             self.cfg["volume"] = round(max(0.15, float(self.cfg.get("volume", 0.35)) * 0.6), 2)
-            if themes and self.cfg.get("nuit_theme", True) and self.cfg.get("theme") not in ("nuit", "sombre"):
+            if themes and self.cfg.get("nuit_theme", True) and self.cfg.get("theme") not in ("nuit", "sombre", "pomme"):
                 self.cfg["theme"] = "nuit"
                 themes.install(self.app, "nuit", self.cfg.get("theme_couleur", ""))
                 self._reopen_settings()
@@ -17042,6 +18012,8 @@ class Companion(QWidget):
 
     # ---------- muet
     def is_muted(self):
+        if self.__dict__.get("_reunion"):                 # 📞 en appel : pas de voix
+            return True
         u = self.cfg.get("mute_until", 0)
         if u == -1:
             return True
@@ -17705,12 +18677,108 @@ class Companion(QWidget):
             self.bridge.ai_done.emit(cb, txt)
         threading.Thread(target=work, daemon=True).start()
 
+    def _aides_commande(self, text, ta):
+        """Les commandes des aides du quotidien et du dev."""
+        if re.search(r"^(?:quel temps (?:fait[- ]il|il fait)|(?:c.est )?quoi la meteo|la meteo|meteo|il fait (?:beau|froid|chaud)"
+                     r"(?: dehors)?|il pleut|what.s the weather)\b", ta):
+            ville = self.cfg.get("meteo_ville", "").strip()
+            mots = {"soleil": "il fait beau ☀️", "nuages": "c'est nuageux ☁️", "pluie": "il pleut 🌧️",
+                    "orage": "il y a de l'orage ⛈️", "neige": "il neige ❄️", "brouillard": "il y a du brouillard 🌫️"}
+            w = mots.get(getattr(self, "weather", "soleil"), "c'est gris")
+            if ville and self.cfg.get("meteo_reelle", True):
+                t = getattr(self, "temperature", None)
+                self.say(f"À {ville}, {w}" + (f", {round(t)} °C." if isinstance(t, (int, float)) else "."))
+            else:
+                self.say(f"Chez moi, {w} ! Pour la vraie météo de ta ville, donne-la-moi dans les Réglages "
+                         "(Au quotidien → Météo).")
+            return True
+        if re.search(r"^(?:ouvre |montre[- ]moi |affiche )?(?:mon |le )?carnet(?: de commandes?)?$|^mes commandes gardees$", ta):
+            self.ouvrir_carnet()
+            return True
+        m = re.search(r"(?:qui|quel programme|qu.est[- ]ce qui|quoi) (?:utilise|occupe|bloque|prend|ecoute sur|tient) "
+                      r"(?:le )?port (\d{2,5})|\bport (\d{2,5}) (?:est )?(?:occupe|utilise|bloque|deja utilise|pris)|"
+                      r"what(?:.s| is) (?:using|on) port (\d{2,5})", ta)
+        if m:
+            self.qui_port(int(next(g for g in m.groups() if g)))
+            return True
+        m = re.search(r"^(?:ecris|redige|fais|propose|trouve)(?:[- ]moi)? (?:un |le |mon )?(?:message de )?commit"
+                      r"(?: (?:dans|pour) (.+))?$|^(?:write|suggest) (?:a |my )?commit(?: message)?$", ta)
+        if m:
+            d = ""
+            if m.group(1):
+                brut = re.search(r"(?:dans|pour) (.+)$", text.strip(), re.I)
+                d = os.path.expanduser(brut.group(1).strip()) if brut else ""
+            self.ecrire_commit(d)
+            return True
+        if re.search(r"^(?:arrete|stop|arreter) (?:de )?surveiller|^ne surveille plus", ta):
+            self.arreter_logs()
+            return True
+        m = re.search(r"^surveille(?:r)? (?:le |ce |mon |les |mes )?(?:fichier|log|logs|journal)(?: (?:de |du )?(.+))?$", ta)
+        if m:
+            brut = re.search(r"((?:~|/)\S+)", text)
+            self.surveiller_log(brut.group(1) if brut else "")
+            return True
+        if re.search(r"^(?:reprends?|reprendre) (?:ou|la ou) j.en (?:etais|suis)|^qu.est[- ]ce que je faisais|"
+                     r"^reprendre ma session|^(?:mes )?fichiers recents$|^ou j.en etais", ta):
+            self.reprendre()
+            return True
+        m = re.search(r"^(?:ajoute|cree|garde|enregistre)(?:[- ]moi)? (?:le |un )?(?:raccourci|texte rapide|phrase toute faite)"
+                      r" ;?([\w-]{1,20})\s*[=:]\s*(.+)$", text.strip(), re.I)
+        if m:
+            self.ajouter_texte_rapide(m.group(1), m.group(2))
+            return True
+        m = re.search(r"^(?:oublie|supprime|enleve|retire) (?:le )?(?:raccourci|texte rapide) ;?([\w-]{1,20})$", ta)
+        if m:
+            k = ";" + m.group(1).lower()
+            if self.cfg.get("textes_rapides", {}).pop(k, None) is not None:
+                save_config(self.cfg)
+                self.say(f"C'est oublié : « {k} ».")
+            else:
+                self.say(f"Je n'ai pas de raccourci « {k} ».")
+            return True
+        if re.search(r"^(?:mes )?(?:raccourcis texte|textes rapides|phrases toutes faites)$", ta):
+            self.textes_rapides_liste()
+            return True
+        if re.fullmatch(r";[\w-]{1,20}", text.strip()):
+            if self.texte_rapide(text.strip()):
+                return True
+            self.say(f"Je n'ai pas de raccourci « {text.strip()} ». Dis « ajoute le raccourci {text.strip()} = ton texte ».")
+            return True
+        if re.search(r"^(?:convertis|convertir|combien (?:font|fait)) ", ta) and aides_vie:
+            q = re.sub(r"^(?:convertis|convertir|combien (?:font|fait))\s+", "", text.strip(), flags=re.I).rstrip(" ?")
+            r = aides_vie.convertir(q)
+            if r:
+                self.say(r)
+                self.montrer_commandes([{"type": "conversion", "texte": r}], titre=self.trd("Conversion"), aide="")
+                return True
+        return False
+
     def _show_text(self, title, text, info=""):
         if not self.text_win:
             self.text_win = extras.TextWindow()
         self.text_win.show_text(title, text, info)
 
     def _extra_command(self, text, ta):
+        if aides_vie:
+            r = self._aides_commande(text, ta)
+            if r:
+                return True
+        if re.search(r"^(?:(?:montre[- ]moi |ouvre |relance |revoir )?(?:le |ton )?(?:tuto|tutoriel)(?: de viki)?|decouvrir viki|"
+                     r"comment (?:tu marches|tu fonctionnes|ca marche)|show me the tutorial)\s*[?!.]*$", ta):
+            return bool(self.ouvrir_tuto())
+        if re.search(r"^(?:qu.est[- ]ce que tu (?:sais|peux) faire|que sais[- ]tu faire|tu sais faire quoi|tu fais quoi|"
+                     r"(?:ouvre |montre[- ]moi )?(?:le |ton )?livre|ce que tu sais faire|aide[- ]moi|aide|help|\?|"
+                     r"je (?:sais|ne sais) pas quoi (?:dire|faire)|je suis perdue?|comment ca marche|"
+                     r"what can you do)\s*[?!.]*$", ta):
+            self.ouvrir_livre()
+            self.say("Voilà tout ce que je sais faire ! Clique sur une phrase et je le fais. 📖")
+            return True
+        if re.search(r"^(?:active |mets |lance |passe en )?(?:le )?mode (?:simple|enfant|facile)$", ta):
+            self.basculer_mode_simple(True)
+            return True
+        if re.search(r"^(?:desactive|enleve|arrete|quitte|sors du) (?:le )?mode (?:simple|enfant|facile)$|^mode (?:complet|normal|expert)$", ta):
+            self.basculer_mode_simple(False)
+            return True
         if re.search(r"^(?:arrete de me (?:dire|repeter) (?:ca|cela)|ne me (?:dis|redis|repete) plus (?:ca|cela|jamais ca)|"
                      r"ne me le (?:dis|redis|repete) plus|plus jamais ca|mute ca|coupe ce message|stop avec ca|"
                      r"(?:j.en ai|j.ai) marre de ce message|chut pour ca|stop saying that|don.t tell me that again)\b", ta):
@@ -18241,6 +19309,8 @@ class Companion(QWidget):
         if now - self.__dict__.get("_clip_malin_t", -999) < 90:
             return
         self._clip_malin_dernier = txt
+        if self._clip_convertir(txt):
+            return
         py = getattr(self, "_pending_yes", None)
         if (py and time.time() - py[1] < 60) or self.bubble_text:
             return
@@ -20793,7 +21863,9 @@ class Companion(QWidget):
             self.say_from("boude")
             return
         if mood > 85 and random.random() < 0.05:
-            self.say_from("content")
+            ph = self._phrase_contente()                # contente… et elle dit pourquoi
+            if ph:
+                self.say(ph)
             return
         if (extras and not GUEST and self.cfg.get("invites") and not self.duo and random.random() < 0.035
                 and not self.in_focus()
@@ -20821,6 +21893,9 @@ class Companion(QWidget):
                     if ok and (not L or L.allows(c_))] or ["spontanees"]
             weights = {"perso": 0.5, "complicite": 0.2, "spontanees": 0.3}
             cat = random.choices(cats, [weights[c_] for c_ in cats])[0]
+            ctx = self._phrase_contexte() if random.random() < 0.65 else None
+            if ctx:                                   # 💬 d'abord ce que tu fais vraiment, en ce moment
+                return self.say(ctx)
             if L:
                 L.note_spont(cat)
             if cat == "perso":
@@ -22973,7 +24048,8 @@ def cli(args):
         try:
             import shlex as _sh
             import touches as _t
-            subprocess.Popen(_sh.split(_t.lanceur()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            subprocess.Popen((["flatpak-spawn", "--host"] if _t.FLATPAK else []) + _sh.split(_t.lanceur_reel()),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
         except Exception:
             return 1

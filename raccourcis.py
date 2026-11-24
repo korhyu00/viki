@@ -114,6 +114,20 @@ def actions(c):
         "terminal commande expliquer shell bash zsh fish danger")
     add("curseur", "🖱️", "Mode curseur Viki", "elle", getattr(c, "mode_curseur_menu", None),
         "curseur souris pointeur roue mode curseur couleur copier texte")
+    add("livre", "✨", "Ce que je sais faire", "elle", getattr(c, "ouvrir_livre", None),
+        "aide aider quoi dire que sais tu faire idees phrases exemples livre perdu")
+    add("simple", "🧸", "Mode simple (enfants) : " + ("activé" if c.cfg.get("mode_simple") else "désactivé"), "elle",
+        getattr(c, "basculer_mode_simple", None), "mode simple enfant enfants facile")
+    add("carnet", "📒", "Mon carnet de commandes", "pc", getattr(c, "ouvrir_carnet", None),
+        "carnet commandes gardees favoris terminal copier")
+    add("commit", "✍️", "Écris mon message de commit", "pc", (lambda: c.ecrire_commit()) if has("ecrire_commit") else None,
+        "commit git message depot changements")
+    add("surveillerlog", "📜", "Surveiller un fichier de log", "pc", (lambda: c.surveiller_log()) if has("surveiller_log")
+        else None, "log logs journal erreur surveiller fichier")
+    add("reprendre", "↩️", "Reprendre où j'en étais", "jour", (lambda: c.reprendre()) if has("reprendre") else None,
+        "reprendre session fichiers recents hier ouvrir")
+    add("textesrapides", "✂️", "Mes phrases toutes faites", "jour", getattr(c, "textes_rapides_liste", None),
+        "phrases toutes faites raccourcis texte adresse mail copier coller")
     add("guide", "👉", "Montre-moi sur l'écran", "pc", getattr(c, "guide_demander", None),
         "guide montre ecran entoure souligne ou cliquer aide fenetre explique")
     add("fichier", "📥", "Donne-moi un fichier", "pc", getattr(c, "open_drop_window", None), "fichier glisser deposer")
@@ -226,12 +240,20 @@ def short_menu(c, tray=False):
         fr.setBold(True)
         ra.setFont(fr)
         fixed.append(ra)
+    if hasattr(c, "ouvrir_livre"):                     # 📖 tout ce qu'elle sait faire, en phrases à cliquer
+        la = m.addAction("✨  " + tr(c, "Ce que je sais faire"), c.ouvrir_livre)
+        fl = la.font()
+        fl.setBold(True)
+        la.setFont(fl)
+        fixed.append(la)
     a = m.addAction("🏠  " + tr(c, "Accueil (mes raccourcis)"), lambda: open_home(c))
     fixed.append(a)
     if hasattr(c, "remplir_menu_curseur") and getattr(C_mod(c), "curseur_viki", None):
         cm = m.addMenu("🖱️  " + tr(c, "Mode curseur"))
         c.remplir_menu_curseur(cm)
         fixed.append(cm.menuAction())
+    if hasattr(c, "ouvrir_tuto"):
+        fixed.append(m.addAction("📖  " + tr(c, "Découvrir Viki (le petit tuto)"), c.ouvrir_tuto))
     if hasattr(c, "fenetre_muets"):
         fixed.append(m.addAction("🔕  " + tr(c, "Ce qu'elle me dit…"), c.fenetre_muets))
     if hasattr(c, "open_tips"):
@@ -243,7 +265,7 @@ def short_menu(c, tray=False):
                                  lambda: c.nearby({"kind": "restaurant", "cuisine": None, "near": ""})))
     for key, ico, nom in CATS:
         items = [x for x in acts if x["cat"] == key]
-        if not items:
+        if not items or (key == "pc" and c.cfg.get("mode_simple")):
             continue
         sm = m.addMenu(f"{ico}  {tr(c, nom)}")
         for x in items:
